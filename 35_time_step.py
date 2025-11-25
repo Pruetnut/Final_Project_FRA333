@@ -8,7 +8,7 @@ image_path = "image/FIBO.png"
 outputname = "trajectory_fixed_dt_ready.csv"
 
 # Robot Control Parameters
-UR5_DT = 0.008                     # *** Fixed Sampling Time (8ms for UR5 CB3) ***
+UR5_DT = 0.02                     # *** Fixed Sampling Time (8ms for UR5 CB3) ***
                                    # ใช้ 0.002 สำหรับ UR5 e-Series
 
 pixel_size = 0.001                 # meters per pixel
