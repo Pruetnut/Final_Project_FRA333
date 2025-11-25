@@ -115,8 +115,6 @@ for cnt in contours:
 strokes = sorted(strokes, key=lambda s: np.mean(s[:,0]) + np.mean(s[:,1]))
 
 
-    # ... (โค้ดส่วนบนเหมือนเดิม) ...
-
 # 3. Build Trajectory with Fixed DT
 traj_data = [] # List to store [t, x, y, z]
 current_global_time = 0.0
