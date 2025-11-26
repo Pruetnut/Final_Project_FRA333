@@ -7,6 +7,7 @@ from scipy import interpolate
 image_path = "image/FIBO.png"
 outputname = "trajectory_fixed_dt_ready_xyz.csv"
 
+
 # Robot Control Parameters
 UR5_DT = 0.02                     # Fixed sampling time (s)
 
@@ -14,6 +15,10 @@ pixel_size = 0.001                 # meters per pixel
 min_contour_len_px = 20            # cut tiny contours
 z_down = 0.01                      # pen-down Z (m)
 z_up = 0.05                        # pen-up Z (m)
+
+offset_x = 0.5   # ห่างจากฐานหุ่นไปด้านหน้า 50 cm
+offset_y = 0.0   # ไม่เลื่อนด้านข้าง
+offset_z = 0.2  # ยกสูงขึ้น 20 cm
 
 # Kinematic Limits
 vmax_tcp = 0.5                     # m/s
@@ -150,6 +155,17 @@ for i, stroke in enumerate(strokes):
 # Convert to numpy array and ensure sorted by time
 traj_arr = np.array(traj_data)
 traj_arr = traj_arr[traj_arr[:,0].argsort()]
+# Apply offset to X, Y, Z
+traj_arr[:,1] += offset_x
+traj_arr[:,2] += offset_y
+traj_arr[:,3] += offset_z
+# ---------------------------------------------------------
+
+# Save CSV
+np.savetxt(outputname, traj_arr, delimiter=",",
+           header="t, x, y, z", comments='')
+print(f"Saved trajectory to {outputname}")
+
 
 # 4. Compute per-axis velocity and acceleration (finite differences with fixed dt)
 n = traj_arr.shape[0]
@@ -230,3 +246,4 @@ plt.grid(True)
 
 plt.tight_layout()
 plt.show()
+
