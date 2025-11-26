@@ -33,7 +33,7 @@ def process_image_to_edges(image_path):                 #output is an image of e
     #import image and convert to grayscale and resize
     img = cv2.imread(image_path,0)
     original_height, original_width = img.shape[:2]
-    new_width = 200
+    new_width = 00
     aspect_ratio = new_width / original_width
     new_height = int(original_height * aspect_ratio)
     resized_image = cv2.resize(img, (new_width, new_height))

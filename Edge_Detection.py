@@ -33,6 +33,7 @@ trajectory = [(t[i], path_points[i][0], path_points[i][1]) for i in range(len(t)
 print(trajectory)
 # Display result
 #cv2.imshow('Oeiginal', imguse)
+
 cv2.imshow("Canny Edge Detection", edges_dilated)
 cv2.imshow("Path", canvas)
 
