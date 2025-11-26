@@ -5,7 +5,7 @@ from scipy import interpolate
 
 # -------------------- PARAMETERS --------------------
 image_path = "image/FIBO.png"
-image_path = "image/line.png"
+image_path = "image/line 2.png"
 outputname = "trajectory_fixed_dt_ready_xyz.csv"
 
 
@@ -79,7 +79,7 @@ original_height, original_width = img.shape[:2]
 new_width = 240
 aspect_ratio = new_width / original_width
 new_height = int(original_height * aspect_ratio)
-img = cv2.resize(img, (170, 150))
+img = cv2.resize(img, (240, 240))
 h, w = img.shape
 img_blur = cv2.GaussianBlur(img, (gauss_ksize, gauss_ksize), 0)
 edges = cv2.Canny(img_blur, canny_thresh1, canny_thresh2)
