@@ -1,3 +1,18 @@
+# -------------------- 0. PARAMETERS --------------------
+# Robot & Physics
+UR5_DT = 0.008          # Time Step (8ms สำหรับ UR5 CB3, 2ms สำหรับ e-Series)
+V_MAX = 0.15            # m/s (ความเร็วสูงสุด)
+A_MAX = 0.3             # m/s^2 (ความเร่งสูงสุด)
+SPEED_FACTOR_DRAW = 0.6 # ตอนวาดให้เดินช้าลงเหลือ 60%
+
+# Dimensions (Meters)
+# จุดเริ่มวาด (Offset) บนโต๊ะหุ่นยนต์ (สมมติว่ากระดาษวางห่างจากฐาน 40cm, เยื้องซ้าย 20cm)
+OFFSET_X = 0.40         
+OFFSET_Y = 0.00         
+
+# Pen Heights
+Z_UP = 0.05             # ยกปากกาสูง 5cm
+Z_DOWN = 0.00           # ปากกาแตะกระดาษ (0cm)
 #-----------------------------
 #1. Image processing
 #-----------------------------
@@ -22,10 +37,10 @@ def process_image_to_edges(image_path):                 #output is an image of e
     aspect_ratio = new_width / original_width
     new_height = int(original_height * aspect_ratio)
     resized_image = cv2.resize(img, (new_width, new_height))
+    
     #--- use double blur to simplify the line form edge detection---
     g_blurred = cv2.GaussianBlur(resized_image, (5,5),0)
     bilateral = cv2.bilateralFilter(g_blurred, 15, 75, 75)
-    #--- Edge Detection --------------------------------------------
     edges = cv2.Canny(bilateral, 50, 150)
     return edges
     
@@ -33,38 +48,38 @@ edge_image = process_image_to_edges(input_image)
 cv2.imshow("output_test", edge_image)
 
 #--- make image pixels fit to work space in meter
-canvas_width_m = 500/1000       #work space width(m)
-canvas_height_m = 500/1000      #work space height(m)
-img_height, img_width = edge_image.shape[:2]
-scale_x = canvas_width_m / img_width
-scale_y = canvas_height_m / img_height
-
-#-----------------------------
-# 2. contour
-#-----------------------------
-def extract_contours_as_paths(edge_image, min_area=100):
-    """
-    Step 2: Contour Extraction
-    หน้าที่: แปลงภาพขาวดำ (Pixels) ให้เป็นเส้น Path (List of points)
-    """
+if edge_image is not None:
+    canvas_width_m = 500/1000       #work space drawing width(m)
+    canvas_height_m = 500/1000      #work space drawing height(m)
+    img_height, img_width = edge_image.shape[:2]
+    scale_x = canvas_width_m / img_width
+    scale_y = canvas_height_m / img_height
+    #---------------------------
+    # Step 2 Contour Extraction
+    #----------------------------
+    def extract_contours_as_paths(edge_image, min_area=100):
+        """
+            Step 2: Contour Extraction
+            หน้าที่: แปลงภาพขาวดำ (Pixels) ให้เป็นเส้น Path (List of points)
+        """
     # cv2.RETR_LIST: ดึงเส้นมาทั้งหมดโดยไม่สนความซับซ้อนของแม่-ลูก
     # cv2.CHAIN_APPROX_SIMPLE: เก็บเฉพาะจุดเลี้ยว (ประหยัดเมม) หรือใช้ CHAIN_APPROX_NONE ถ้าอยากได้ละเอียดทุกจุด
-    contours, _ = cv2.findContours(edge_image, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(edge_image, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     
-    valid_paths = []
+        valid_paths = []
 
-    for cnt in contours:
-        # กรอง Noise: ถ้าเส้นสั้นเกินไป หรือเป็นจุดเล็กๆ ไม่ต้องเอามา
-        if cv2.contourArea(cnt) > min_area or cv2.arcLength(cnt, False) > 50:
-            
-            # (Optional) Smooth Path: ลดจำนวนจุดลงเพื่อให้เส้นเรียบขึ้น หุ่นยนต์เดินนิ่งขึ้น
-            epsilon = 0.001 * cv2.arcLength(cnt, False) # ค่าความละเอียด (ยิ่งมาก เส้นยิ่งเหลี่ยม)
-            approx = cv2.approxPolyDP(cnt, epsilon, False)
-            
-            # reshape จาก (N, 1, 2) เป็น (N, 2) ให้ใช้ง่ายๆ
-            valid_paths.append(approx.reshape(-1, 2))
-            
-    return valid_paths
+        for cnt in contours:
+            # กรอง Noise: ถ้าเส้นสั้นเกินไป หรือเป็นจุดเล็กๆ ไม่ต้องเอามา
+            if cv2.contourArea(cnt) > min_area or cv2.arcLength(cnt, False) > 50:
+                
+                # (Optional) Smooth Path: ลดจำนวนจุดลงเพื่อให้เส้นเรียบขึ้น หุ่นยนต์เดินนิ่งขึ้น
+                epsilon = 0.001 * cv2.arcLength(cnt, False) # ค่าความละเอียด (ยิ่งมาก เส้นยิ่งเหลี่ยม)
+                approx = cv2.approxPolyDP(cnt, epsilon, False)
+                
+                # reshape จาก (N, 1, 2) เป็น (N, 2) ให้ใช้ง่ายๆ
+                valid_paths.append(approx.reshape(-1, 2))
+                
+        return valid_paths
 
 #show result of find contour
 def visualize_paths_matplotlib(paths):
