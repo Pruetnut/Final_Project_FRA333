@@ -19,7 +19,7 @@ z_up = 0.05                        # pen-up Z (m)
 
 offset_x = 0.5   # ห่างจากฐานหุ่นไปด้านหน้า 50 cm
 offset_y = 0.0   # ไม่เลื่อนด้านข้าง
-offset_z = 0.2  # ยกสูงขึ้น 20 cm
+offset_z = 0.0  # ยกสูงขึ้น 20 cm
 
 # Kinematic Limits
 vmax_tcp = 0.5                     # m/s
