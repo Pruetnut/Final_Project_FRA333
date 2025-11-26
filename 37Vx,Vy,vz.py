@@ -6,7 +6,7 @@ from scipy import interpolate
 # -------------------- PARAMETERS --------------------
 image_path = "image/FIBO.png"
 # image_path = "image/line 2.png"
-outputname = "trajectory_fixed_dt_ready_xyz.csv"
+outputname = "trajectory_FIBO30.csv"
 
 
 # Robot Control Parameters
@@ -76,7 +76,7 @@ def generate_trapezoidal_s_profile_fixed_dt(L, vmax, amax, dt):
 # 1. Image Processing
 img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
 original_height, original_width = img.shape[:2]
-new_width = 240
+new_width = 200
 aspect_ratio = new_width / original_width
 new_height = int(original_height * aspect_ratio)
 img = cv2.resize(img, (new_height, new_width))
