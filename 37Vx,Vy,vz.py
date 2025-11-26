@@ -14,7 +14,7 @@ UR5_DT = 0.02                     # Fixed sampling time (s)
 
 pixel_size = 0.001                 # meters per pixel
 min_contour_len_px = 20            # cut tiny contours
-z_down = 0.01                      # pen-down Z (m)
+z_down = 0.00                      # pen-down Z (m)
 z_up = 0.05                        # pen-up Z (m)
 
 offset_x = 0.5   # ห่างจากฐานหุ่นไปด้านหน้า 50 cm
