@@ -75,9 +75,11 @@ def generate_trapezoidal_s_profile_fixed_dt(L, vmax, amax, dt):
 
 # 1. Image Processing
 img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-if img is None:
-    raise FileNotFoundError(f"Cannot open {image_path}")
-
+original_height, original_width = img.shape[:2]
+new_width = 600
+aspect_ratio = new_width / original_width
+new_height = int(original_height * aspect_ratio)
+img = cv2.resize(img, (new_width, new_height))
 h, w = img.shape
 img_blur = cv2.GaussianBlur(img, (gauss_ksize, gauss_ksize), 0)
 edges = cv2.Canny(img_blur, canny_thresh1, canny_thresh2)
