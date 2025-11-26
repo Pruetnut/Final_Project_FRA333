@@ -23,7 +23,7 @@ offset_z = 0.2  # ยกสูงขึ้น 20 cm
 # Kinematic Limits
 vmax_tcp = 0.5                     # m/s
 amax_tcp = 1.0                     # m/s^2
-pen_down_speed_factor = 0.7        # use 70% when drawing
+pen_down_speed_factor = 0.2        # use 70% when drawing
 
 # Canny params
 canny_thresh1 = 100
