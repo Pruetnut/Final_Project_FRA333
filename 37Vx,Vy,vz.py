@@ -5,6 +5,7 @@ from scipy import interpolate
 
 # -------------------- PARAMETERS --------------------
 image_path = "image/FIBO.png"
+image_path = "image/line.png"
 outputname = "trajectory_fixed_dt_ready_xyz.csv"
 
 
