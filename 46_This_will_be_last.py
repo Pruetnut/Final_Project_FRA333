@@ -77,6 +77,8 @@ def generate_linear_segment(points, speed, dt, start_t):
     """Generate trajectory with constant speed along points"""
     traj = []
     t = start_t
+    # traj = insert_delay(traj, 0.5, dt)
+
     for i in range(len(points)-1):
         p0 = points[i]
         p1 = points[i+1]
@@ -93,6 +95,8 @@ def generate_linear_segment(points, speed, dt, start_t):
     # append last point
     pos = points[-1]
     traj.append([t, pos[0], pos[1], pos[2], 0,0,0,0,0,0])
+    traj = insert_delay(traj, 0.5, dt)
+
     return traj, t
 
 def generate_spline_segment(points, speed, dt, start_t, smooth_factor):
@@ -118,6 +122,23 @@ def generate_spline_segment(points, speed, dt, start_t, smooth_factor):
                      vel_eval[i,0], vel_eval[i,1], vel_eval[i,2],
                      acc_eval[i,0], acc_eval[i,1], acc_eval[i,2]])
     return traj, start_t + duration
+
+def insert_delay(traj, delay, dt):
+    """Insert a delay by holding the last pose for specified time"""
+    if delay <= 0:
+        return traj
+    
+    last = traj[-1]  # [t, x, y, z, vx, vy, vz, ax, ay, az]
+    t_last = last[0]
+    pos = last[1:4]
+
+    n_step = int(np.ceil(delay / dt))
+
+    for i in range(n_step):
+        t_last += dt
+        traj.append([t_last, pos[0], pos[1], pos[2],
+                     0,0,0, 0,0,0])
+    return traj
 
 # ======================================================================
 # 3. MAIN WORKFLOW

@@ -1,298 +1,287 @@
+#!/usr/bin/env python3
 """
-ur5_toppra_trajectory.py
-- Input: image -> edges -> contours -> strokes (same approach you already had)
-- For each stroke: fit spline geometry, then time-parameterize with toppra (v_max, a_max)
-- Output CSV: t,x,y,z,vx,vy,vz,ax,ay,az
-- Requires: numpy, scipy, opencv-python, pandas, matplotlib, toppra
+image_to_trajectory.py
+
+Input: IMAGE_PATH (png/jpg)
+Output: CSV with columns: t,x,y,z,vx,vy,vz,ax,ay,az
+
+Configurable parameters (see CONFIG section).
+
+Author: ChatGPT (example)
 """
 
-import os
-import sys
-import math
 import cv2
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-from scipy.interpolate import splprep, splev, interp1d
+import math
+import os
+from pathlib import Path
 
-# toppra imports (must have toppra installed)
-try:
-    import toppra as ta
-    import toppra.constraint as constraint
-    import toppra.algorithm as algo
-except Exception as e:
-    raise ImportError("toppra is required. Install with `pip install toppra`. "
-                      "Error: " + str(e))
-
-# -------------------------
-# 1) CONFIGURATION
-# -------------------------
-DRAW_MODE = "FLOOR"         # "FLOOR" or "WALL"
+# --------------------------
+# CONFIG (ปรับค่าได้ตามต้องการ)
+# --------------------------
 IMAGE_PATH = "image/FIBO.png"
-OUTPUT_CSV = f"ur5_toppra_{DRAW_MODE.lower()}.csv"
+OUTPUT_CSV = "trajectory_output.csv"
 
-# image->physical mapping
-CANVAS_WIDTH_M = 0.30       # physical width (m) that the image maps to
-IMG_PROCESS_WIDTH = 600     # pixels (resized width)
-MIN_CONTOUR_LEN = 12
-VIA_POINT_DIST = 0.005      # 5 mm
+# Drawing / physical parameters (units: mm)
+DRAWING_WIDTH_MM = 150.0      # ขนาดความกว้างของรูปที่วาด (mm)
+ROBOT_ORIGIN_XY_MM = (0.0, 0.0)  # offset for robot workspace origin (mm)
+PAPER_OFFSET_MM = (50.0, 50.0)   # additional translation offset to place drawing relative to robot origin
 
-# pen & plane offsets
-BASE_TO_PLANE_DIST = 0.20   # your requested 20 cm from robot base to drawing plane
-OFFSET_X = 0.0
-OFFSET_Y = 0.0
-OFFSET_Z = 0.0
+# Pen z-positions (mm)
+DRAW_Z = 0.0     # z when drawing (touching paper)
+LIFT_Z = 30.0    # z when pen lifted (above paper)
 
-PEN_OFFSET_DOWN = 0.0
-PEN_SAFE_UP = 0.05
+# Pen control timing
+PEN_DOWN_DELAY = 0.10  # s : delay to wait after pen-down (you can insert extra frames)
+PEN_UP_DELAY = 0.05    # s : delay to wait after pen-up
 
-# motion limits (tune these)
-V_MAX_DRAW = 0.04          # m/s for drawing
-A_MAX_DRAW = 0.5           # m/s^2
-V_MAX_TRAVEL = 0.10        # m/s for travel (pen-up)
-A_MAX_TRAVEL = 0.8         # m/s^2
+# Trajectory sampling & dynamics limits
+SAMPLING_TIME = 0.02   # s (initial sampling dt)
+MAX_VELOCITY = 200.0   # mm/s maximum linear speed desired (robot TCP speed)
+MAX_ACCEL = 1000.0     # mm/s^2 maximum linear accel desired
+PATH_POINT_SPACING = 1.0  # mm spacing when resampling paths (smaller = more points)
 
-UR5_DT = 0.008             # sampling time for output
+# Image processing
+CANNY_THRESH1 = 50
+CANNY_THRESH2 = 150
+MIN_CONTOUR_LENGTH = 10  # ignore very small contours
 
-PLOT_DEBUG = True
+# Output scaling / flip
+FLIP_VERTICAL = True  # flip vertical axis (image coordinate to robot coordinate)
+INVERT_COLORS = False  # set True if image is white-on-black vs black-on-white
 
-# Derived plane variables
-if DRAW_MODE == "WALL":
-    # wall: plane is Y-Z, X is depth
-    PLANE_X = BASE_TO_PLANE_DIST + OFFSET_X
-    START_POS_H = OFFSET_Y
-    START_POS_V = OFFSET_Z
-else:
-    # floor: plane is X-Y, Z is height
-    PLANE_Z = BASE_TO_PLANE_DIST + OFFSET_Z
-    START_POS_H = OFFSET_Y
-    START_POS_V = OFFSET_X
+# --------------------------
+# Helpers
+# --------------------------
 
-# -------------------------
-# 2) Helper functions
-# -------------------------
-def process_image_to_edges(image_path, target_width=IMG_PROCESS_WIDTH):
-    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+def read_image_gray(path):
+    img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
     if img is None:
-        raise FileNotFoundError("Image not found: " + image_path)
-    h, w = img.shape[:2]
-    scale = target_width / w
-    new_h = int(h * scale)
-    resized = cv2.resize(img, (target_width, new_h))
-    blur = cv2.GaussianBlur(resized, (5,5), 0)
-    bilateral = cv2.bilateralFilter(blur, 9, 75, 75)
-    edges = cv2.Canny(bilateral, 50, 150)
-    return edges, new_h, target_width
+        raise FileNotFoundError(f"Cannot open image: {path}")
+    return img
 
-def downsample_points(points, min_dist=VIA_POINT_DIST):
-    if len(points) < 2:
-        return np.array(points)
-    kept = [points[0]]
-    last = points[0]
-    for p in points[1:]:
-        if np.linalg.norm(p - last) >= min_dist:
-            kept.append(p)
-            last = p
-    if not np.allclose(kept[-1], points[-1]):
-        kept.append(points[-1])
-    return np.array(kept)
+def get_binary_edges(img):
+    # optional invert
+    if INVERT_COLORS:
+        img = 255 - img
+    # use Canny then dilate to connect small gaps optionally
+    edges = cv2.Canny(img, CANNY_THRESH1, CANNY_THRESH2)
+    # optionally dilate/erode to close small gaps - commented out for now
+    return edges
 
-def order_strokes_greedy(strokes, home):
-    """Greedy nearest-neighbour order of strokes for shorter travel"""
-    remaining = strokes.copy()
-    ordered = []
-    cur = home
-    while remaining:
-        best_i = None
-        best_d = float("inf")
-        best_rev = False
-        for i,s in enumerate(remaining):
-            d0 = np.linalg.norm(s[0] - cur)
-            d1 = np.linalg.norm(s[-1] - cur)
-            if d0 < best_d:
-                best_d = d0; best_i = i; best_rev = False
-            if d1 < best_d:
-                best_d = d1; best_i = i; best_rev = True
-        chosen = remaining.pop(best_i)
-        if best_rev:
-            chosen = chosen[::-1]
-        ordered.append(chosen)
-        cur = chosen[-1]
-    return ordered
-
-# -------------------------
-# 3) TOPPRA wrapper
-# -------------------------
-def generate_toppra_trajectory(points, vmax, amax, dt, start_t=0.0, path_smooth_s=1e-4):
-    """
-    Input:
-      - points: Nx3 numpy array (Cartesian path)
-      - vmax: scalar maximum cartesian speed (applied per-axis equally)
-      - amax: scalar maximum cartesian accel
-      - dt: desired sampling time for output
-      - start_t: start time offset
-    Output:
-      - rows: list of [t,x,y,z,vx,vy,vz,ax,ay,az]
-      - end_time
-    Notes:
-      - Uses toppra.SplineInterpolator and TOPPRA solver (seidel recommended).
-      - We treat the 3D geometric path as a 3-DOF "joint" path and apply joint-like limits per axis.
-    """
-    pts = np.asarray(points)
-    if pts.shape[0] < 2:
-        return [], start_t
-
-    # Prepare SplineInterpolator: nodes parameter array must be monotonic in [0,1]
-    u_nodes = np.linspace(0.0, 1.0, pts.shape[0])
-    path = ta.SplineInterpolator(u_nodes, pts.T.tolist())  # SplineInterpolator expects (u_list, waypoints_list)
-    # Setup constraints (apply same scalar limit per axis)
-    vel_limit = np.array([vmax]*3)
-    acc_limit = np.array([amax]*3)
-    vel_constr = constraint.JointVelocityConstraint(vel_limit)
-    acc_constr = constraint.JointAccelerationConstraint(acc_limit)
-
-    constraints = [vel_constr, acc_constr]
-
-    # Solve TOPP-RA time-optimal parameterization
-    instance = algo.TOPPRA(constraints, path, solver_wrapper='seidel')
-    # compute_trajectory() returns a trajectory object (piecewise poly)
-    traj = instance.compute_trajectory()
-    T = traj.get_duration()
-
-    # sample at dt
-    t_samples = np.arange(0.0, T + 1e-9, dt)
-    # trajectory evaluation
-    pos = np.array(traj.eval(t_samples))   # shape (len, dof)
-    vel = np.array(traj.evald(t_samples))
-    acc = np.array(traj.evaldd(t_samples))
-
-    rows = []
-    for i, tt in enumerate(t_samples):
-        rows.append([start_t + tt,
-                     pos[i,0], pos[i,1], pos[i,2],
-                     vel[i,0], vel[i,1], vel[i,2],
-                     acc[i,0], acc[i,1], acc[i,2]])
-    return rows, start_t + T
-
-# -------------------------
-# 4) Pen-up travel (simple cubic, time-limited)
-# -------------------------
-def compute_cubic_segment(p0, p1, vmax, amax, dt, start_t):
-    p0 = np.array(p0, dtype=float)
-    p1 = np.array(p1, dtype=float)
-    L = np.linalg.norm(p1 - p0)
-    if L < 1e-9:
-        return [], start_t
-    T_vel = L / max(vmax, 1e-9)
-    T_acc = math.sqrt(6 * L / max(amax, 1e-9))
-    T = max(T_vel, T_acc, dt)
-    a0 = p0
-    a1 = np.zeros(3)
-    a2 = (3*(p1-p0)/T**2) - (2*a1)/T
-    a3 = (2*(p0-p1)/T**3) + (a1)/T**2
-    rows = []
-    t = start_t
-    n_steps = max(int(math.ceil(T/dt)), 1)
-    for i in range(n_steps):
-        tau = i*dt
-        pos = a0 + a1*tau + a2*tau**2 + a3*tau**3
-        vel = a1 + 2*a2*tau + 3*a3*tau**2
-        acc = 2*a2 + 6*a3*tau
-        rows.append([t, pos[0], pos[1], pos[2], vel[0],vel[1],vel[2], acc[0],acc[1],acc[2]])
-        t += dt
-    rows.append([t, p1[0],p1[1],p1[2], 0.0,0.0,0.0, 0.0,0.0,0.0])
-    return rows, t
-
-def sanitize_stroke(points):
-    """Remove duplicate consecutive points and ensure at least 3 valid points."""
-    pts = np.asarray(points)
-    # remove consecutive duplicates
-    diff = np.linalg.norm(np.diff(pts, axis=0), axis=1)
-    keep = np.insert(diff > 1e-9, 0, True)
-    pts_clean = pts[keep]
-
-    # if too short, return empty
-    if pts_clean.shape[0] < 3:
-        return np.array([])
-
-    return pts_clean
-
-
-# -------------------------
-# 5) MAIN pipeline
-# -------------------------
-def main():
-    print("1) Image processing...")
-    edges, img_h, img_w = process_image_to_edges(IMAGE_PATH, IMG_PROCESS_WIDTH)
-    cv2.imwrite("debug_edges.png", edges)
+def find_contours(edges):
     contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
-    print("Contours:", len(contours))
+    # filter small
+    filtered = [c.reshape(-1,2) for c in contours if len(c) >= MIN_CONTOUR_LENGTH]
+    return filtered
 
-    # Map contours to workspace points (meters)
-    scale = CANVAS_WIDTH_M / img_w
-    strokes = []
-    for cnt in contours:
-        if len(cnt) < MIN_CONTOUR_LEN:
-            continue
-        pts_px = cnt.reshape(-1,2).astype(float)
-        if DRAW_MODE == "WALL":
-            y_rob = pts_px[:,0]*scale + START_POS_H
-            z_rob = (img_h - pts_px[:,1])*scale + START_POS_V
-            x_rob = np.full_like(y_rob, PLANE_X + PEN_OFFSET_DOWN)
-            dense = np.column_stack([x_rob + OFFSET_X, y_rob + OFFSET_Y, z_rob + OFFSET_Z])
+def contour_length(pts):
+    d = np.sqrt(np.sum(np.diff(pts, axis=0)**2, axis=1))
+    return d.sum()
+
+def resample_path(pts, spacing=1.0):
+    # pts: Nx2
+    if len(pts) < 2:
+        return pts.copy()
+    # cumulative distance
+    diffs = np.sqrt(np.sum(np.diff(pts, axis=0)**2, axis=1))
+    cum = np.concatenate([[0.0], np.cumsum(diffs)])
+    total = cum[-1]
+    if total == 0:
+        return pts[:1].copy()
+    n_samples = max(1, int(math.ceil(total / spacing)))
+    sample_d = np.linspace(0, total, n_samples+1)  # +1 to include endpoint
+    new_pts = []
+    for d in sample_d:
+        # find segment
+        idx = np.searchsorted(cum, d, side='right') - 1
+        if idx >= len(pts)-1:
+            new_pts.append(pts[-1])
         else:
-            y_rob = pts_px[:,0]*scale + START_POS_H
-            x_rob = START_POS_V + (pts_px[:,1]*scale)
-            z_rob = np.full_like(y_rob, PLANE_Z + PEN_OFFSET_DOWN)
-            dense = np.column_stack([x_rob + OFFSET_X, y_rob + OFFSET_Y, z_rob + OFFSET_Z])
-        via = downsample_points(dense, VIA_POINT_DIST)
-        if via.shape[0] >= 2:
-            strokes.append(via)
+            t = (d - cum[idx]) / (cum[idx+1] - cum[idx]) if (cum[idx+1] - cum[idx])>0 else 0.0
+            p = (1-t)*pts[idx] + t*pts[idx+1]
+            new_pts.append(p)
+    return np.array(new_pts)
 
-    if not strokes:
-        print("No strokes found — adjust image/thresholds.")
+def image_points_to_world(pts, img_shape, drawing_width_mm, flip_vertical=True, origin_offset=(0,0)):
+    """Map image coordinates (x col, y row) to world mm coordinates.
+       - pts: Nx2 array in image coords (col, row)
+       - img_shape: (h, w)
+       - drawing_width_mm: desired width in mm
+       returns Nx2 in mm"""
+    h, w = img_shape
+    scale = drawing_width_mm / float(w)
+    # map
+    xs = pts[:,0].astype(float) * scale
+    ys = pts[:,1].astype(float) * scale
+    if flip_vertical:
+        ys = (h * scale) - ys
+    # apply origin offset
+    xs = xs + origin_offset[0]
+    ys = ys + origin_offset[1]
+    return np.column_stack([xs, ys])
+
+def build_strokes_from_contours(contours, img_shape, cfg):
+    strokes = []  # list of (x,y,pen) where pen=0 -> up, 1->down
+    origin = (cfg['ROBOT_ORIGIN_XY_MM'][0] + cfg['PAPER_OFFSET_MM'][0],
+              cfg['ROBOT_ORIGIN_XY_MM'][1] + cfg['PAPER_OFFSET_MM'][1])
+    for i, c in enumerate(contours):
+        res = resample_path(c, spacing=cfg['PATH_POINT_SPACING'])
+        if len(res) < 2:
+            continue
+        world = image_points_to_world(res, img_shape, cfg['DRAWING_WIDTH_MM'], flip_vertical=cfg['FLIP_VERTICAL'], origin_offset=origin)
+        # move to start (pen up), then pen down across points
+        strokes.append((world[0,0], world[0,1], 0))  # pen up move-to
+        for p in world:
+            strokes.append((p[0], p[1], 1))  # pen down
+        # After finishing contour, lift pen
+        strokes.append((world[-1,0], world[-1,1], 0))
+    return strokes
+
+def insert_pen_delay_samples(samples, sampling_time, pen_down_delay, pen_up_delay):
+    """samples: list of (x,y,z,pen). Insert additional samples (same pos) for pen delays when pen state changes.
+       Return new list."""
+    out = []
+    prev_pen = None
+    for x,y,z,pen in samples:
+        if prev_pen is None:
+            out.append((x,y,z,pen))
+        else:
+            if pen != prev_pen:
+                # insert delay samples at previous position (or current) depending on transition
+                delay = pen_down_delay if pen==1 else pen_up_delay
+                if delay > 0 and sampling_time>0:
+                    n_extra = int(math.ceil(delay / sampling_time))
+                    for _ in range(n_extra):
+                        # hold current position with same pen-state (the new state) to allow time for servo
+                        out.append((x,y,z,pen))
+                out.append((x,y,z,pen))
+            else:
+                out.append((x,y,z,pen))
+        prev_pen = pen
+    return out
+
+def strokes_to_samples(strokes, draw_z, lift_z):
+    """Convert strokes (x,y,pen) to samples (x,y,z,pen) with z assigned based on pen flag."""
+    samples = []
+    for x,y,pen in strokes:
+        z = draw_z if pen==1 else lift_z
+        samples.append((x,y,z,pen))
+    return samples
+
+def compute_kinematics(samples, dt):
+    """samples: list of (x,y,z,pen)
+       returns arrays t, x,y,z, vx,vy,vz, ax,ay,az"""
+    pts = np.array([[s[0], s[1], s[2]] for s in samples], dtype=float)
+    n = len(pts)
+    if n == 0:
+        return None
+    # time array
+    t = np.arange(n) * dt
+    # velocities: forward difference, central for interior
+    v = np.zeros_like(pts)
+    if n>=2:
+        v[0] = (pts[1]-pts[0]) / dt
+        for i in range(1,n-1):
+            v[i] = (pts[i+1]-pts[i-1])/(2*dt)
+        v[-1] = (pts[-1]-pts[-2]) / dt
+    # accelerations
+    a = np.zeros_like(pts)
+    if n>=3:
+        a[0] = (v[1]-v[0]) / dt
+        for i in range(1,n-1):
+            a[i] = (v[i+1]-v[i-1])/(2*dt)
+        a[-1] = (v[-1]-v[-2]) / dt
+    # package
+    x,y,z = pts[:,0], pts[:,1], pts[:,2]
+    vx,vy,vz = v[:,0], v[:,1], v[:,2]
+    ax,ay,az = a[:,0], a[:,1], a[:,2]
+    return t, x,y,z, vx,vy,vz, ax,ay,az
+
+def get_max_speed_accel(vx,vy,vz,ax,ay,az):
+    speed = np.sqrt(vx**2 + vy**2 + vz**2)
+    accel = np.sqrt(ax**2 + ay**2 + az**2)
+    return speed.max() if len(speed)>0 else 0.0, accel.max() if len(accel)>0 else 0.0
+
+def scale_time_to_limits(dt, vx,vy,vz,ax,ay,az, vmax, amax):
+    """Given current kinematics, compute time scale factor s >= 1 to satisfy vmax and amax:
+       If we scale time by s (i.e., new dt = dt * s), velocities scale by 1/s, accelerations by 1/s^2.
+       So choose s = max( vmax_current / vmax_allowed, sqrt(amax_current / amax_allowed) )"""
+    cur_vmax, cur_amax = get_max_speed_accel(vx,vy,vz,ax,ay,az)
+    s_v = (cur_vmax / vmax) if vmax>0 and cur_vmax>vmax else 1.0
+    s_a = math.sqrt(cur_amax / amax) if amax>0 and cur_amax>amax else 1.0
+    s = max(1.0, s_v, s_a)
+    return s
+
+# --------------------------
+# Main pipeline
+# --------------------------
+
+def pipeline(image_path, out_csv, cfg):
+    img = read_image_gray(image_path)
+    h,w = img.shape
+    edges = get_binary_edges(img)
+    contours = find_contours(edges)
+    print(f"Found {len(contours)} contours (filtered).")
+    if len(contours)==0:
+        print("No contours found. Exiting.")
         return
 
-    # order strokes
-    if DRAW_MODE == "WALL":
-        home = np.array([PLANE_X, START_POS_H, START_POS_V])
+    strokes = build_strokes_from_contours(contours, img_shape=(h,w), cfg=cfg)
+    print(f"Built {len(strokes)} stroke points (incl. pen flags).")
+    # convert to xyz samples
+    base_samples = strokes_to_samples(strokes, draw_z=cfg['DRAW_Z'], lift_z=cfg['LIFT_Z'])
+    # insert pen delays:
+    samples_with_delay = insert_pen_delay_samples(base_samples, cfg['SAMPLING_TIME'], cfg['PEN_DOWN_DELAY'], cfg['PEN_UP_DELAY'])
+    print(f"After inserting pen delays: {len(samples_with_delay)} samples.")
+
+    # compute kinematics
+    t,x,y,z,vx,vy,vz,ax,ay,az = compute_kinematics(samples_with_delay, cfg['SAMPLING_TIME'])
+    cur_vmax, cur_amax = get_max_speed_accel(vx,vy,vz,ax,ay,az)
+    print(f"Initial vmax={cur_vmax:.2f} mm/s, amax={cur_amax:.2f} mm/s^2 (limits: vmax={cfg['MAX_VELOCITY']}, amax={cfg['MAX_ACCEL']})")
+
+    # if exceeding limits, scale dt and recompute (simple global scaling)
+    s = scale_time_to_limits(cfg['SAMPLING_TIME'], vx,vy,vz,ax,ay,az, cfg['MAX_VELOCITY'], cfg['MAX_ACCEL'])
+    if s > 1.0001:
+        print(f"Scaling time by factor {s:.3f} to respect limits (increasing sampling time).")
+        new_dt = cfg['SAMPLING_TIME'] * s
+        t,x,y,z,vx,vy,vz,ax,ay,az = compute_kinematics(samples_with_delay, new_dt)
     else:
-        home = np.array([START_POS_V, START_POS_H, PLANE_Z])
-    strokes_ordered = order_strokes_greedy(strokes, home)
-    print("Strokes after ordering:", len(strokes_ordered))
+        new_dt = cfg['SAMPLING_TIME']
 
-    # build full trajectory using toppra for drawing segments
-    full_rows = []
-    t_now = 0.0
-    last_pos = None
+    # Build DataFrame
+    df = pd.DataFrame({
+        't': t,
+        'x': x, 'y': y, 'z': z,
+        'vx': vx, 'vy': vy, 'vz': vz,
+        'ax': ax, 'ay': ay, 'az': az
+    })
+    df.to_csv(out_csv, index=False)
+    print(f"Wrote CSV to {out_csv} (n={len(df)})")
+    return df
 
-    for stroke in strokes_ordered:
-        stroke = sanitize_stroke(stroke)
-        if len(stroke) < 3:
-            continue  # skip useless tiny strokes
-
-        draw_rows, t_now = generate_toppra_trajectory(stroke, V_MAX_DRAW, A_MAX_DRAW, UR5_DT, t_now)
-
-
-    # build DataFrame and save CSV
-    df = pd.DataFrame(full_rows, columns=['t','x','y','z','vx','vy','vz','ax','ay','az'])
-    df.to_csv(OUTPUT_CSV, index=False, float_format='%.6f')
-    print("Saved:", OUTPUT_CSV)
-
-    # debug plots
-    if PLOT_DEBUG:
-        vnorm = np.sqrt(df['vx']**2 + df['vy']**2 + df['vz']**2)
-        plt.figure(figsize=(10,8))
-        plt.subplot(211)
-        plt.plot(df['t'], vnorm)
-        plt.title('Speed profile')
-        plt.grid(True)
-        ax = plt.subplot(212, projection='3d')
-        ax.plot(df['x'], df['y'], df['z'], linewidth=0.6)
-        ax.set_title('Trajectory (3D)')
-        plt.tight_layout()
-        plt.show()
-
-
+# --------------------------
+# Run as script
+# --------------------------
 if __name__ == "__main__":
-    main()
+    cfg = {
+        'DRAWING_WIDTH_MM': DRAWING_WIDTH_MM,
+        'ROBOT_ORIGIN_XY_MM': ROBOT_ORIGIN_XY_MM,
+        'PAPER_OFFSET_MM': PAPER_OFFSET_MM,
+        'DRAW_Z': DRAW_Z,
+        'LIFT_Z': LIFT_Z,
+        'PEN_DOWN_DELAY': PEN_DOWN_DELAY,
+        'PEN_UP_DELAY': PEN_UP_DELAY,
+        'SAMPLING_TIME': SAMPLING_TIME,
+        'MAX_VELOCITY': MAX_VELOCITY,
+        'MAX_ACCEL': MAX_ACCEL,
+        'PATH_POINT_SPACING': PATH_POINT_SPACING,
+        'FLIP_VERTICAL': FLIP_VERTICAL
+    }
+
+    # Ensure image exists
+    if not Path(IMAGE_PATH).exists():
+        print(f"ERROR: IMAGE_PATH '{IMAGE_PATH}' not found.")
+    else:
+        df = pipeline(IMAGE_PATH, OUTPUT_CSV, cfg)
