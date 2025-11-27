@@ -10,17 +10,17 @@ from scipy.interpolate import splprep, splev
 
 DRAW_MODE = 'FLOOR'      # 'WALL' or 'FLOOR'
 IMAGE_PATH = "image/FIBO.png"
-OUTPUT_CSV = f"1ur5_Trajectory{DRAW_MODE.lower()}.csv"
+OUTPUT_CSV = f"2ur5_Trajectory{DRAW_MODE.lower()}.csv"
 
 # Workspace
-CANVAS_WIDTH_M = 0.9     # drawing width in meters
+CANVAS_WIDTH_M = 0.8     # drawing width in meters
 IMG_PROCESS_WIDTH = 600   # resize width pixels
 MIN_CONTOUR_LEN = 15
-VIA_POINT_DIST = 0.01    # downsample 5mm
-SMOOTHING_FACTOR = 0.0002 # spline smoothness
+VIA_POINT_DIST = 5*0.001   # downsample 5mm
+SMOOTHING_FACTOR = 0.002 # spline smoothness
 
 # Safe Heights
-SAFE_Z_FLOOR = 0.01
+SAFE_Z_FLOOR = 0.015
 SAFE_X_WALL = 0.05
 
 # Pen offsets
@@ -40,8 +40,8 @@ if DRAW_MODE == 'WALL':
     START_POS_V = 0.50
     PLANE_LEVEL = 0.50
 elif DRAW_MODE == 'FLOOR':
-    START_POS_H = -0.15
-    START_POS_V = 0.40
+    START_POS_H = -0.15-0.20
+    START_POS_V = 0.60-0.20
     PLANE_LEVEL = 0.0
 
 # ======================================================================
@@ -206,7 +206,7 @@ from scipy.interpolate import interp1d
 dt_target = UR5_DT            # เช่น 0.008
 savgol_win = 11              # ต้องเป็นคี่, เลือกตามความยาว (11, 21,...)
 savgol_poly = 3
-median_kernel = 7            # สำหรับ median filter ของ velocity
+median_kernel = 5            # สำหรับ median filter ของ velocity
 VEL_CLAMP = 0.8              # m/s (ปรับตาม UR5 limit)
 ACC_CLAMP = 2.0              # m/s^2 (ปรับตาม UR5 limit)
 spike_threshold_ratio = 6.0  # ถ้าขึ้น/ลงของ speed เกิน median*ratio ถือเป็น spike
@@ -308,8 +308,8 @@ plt.tight_layout()
 plt.show()
 
 
-# df_fixed.to_csv(OUTPUT_CSV, index=False, float_format='%.6f')
-# print(f"✅ Saved: {OUTPUT_CSV}")
+df_fixed.to_csv(OUTPUT_CSV, index=False, float_format='%.6f')
+print(f"✅ Saved: {OUTPUT_CSV}")
 
 # # Plot for validation
 # plt.figure(figsize=(10,8))
