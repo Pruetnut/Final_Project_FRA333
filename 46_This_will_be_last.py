@@ -10,17 +10,17 @@ from scipy.interpolate import splprep, splev
 
 DRAW_MODE = 'FLOOR'      # 'WALL' or 'FLOOR'
 IMAGE_PATH = "image/FIBO.png"
-OUTPUT_CSV = f"3ur5_Trajectory{DRAW_MODE.lower()}.csv"
+OUTPUT_CSV = f"5ur5_Trajectory{DRAW_MODE.lower()}.csv"
 
 # Workspace
-CANVAS_WIDTH_M = 0.8     # drawing width in meters
+CANVAS_WIDTH_M = 0.9     # drawing width in meters
 IMG_PROCESS_WIDTH = 600   # resize width pixels
 MIN_CONTOUR_LEN = 15
-VIA_POINT_DIST = 5*0.001   # downsample 5mm
-SMOOTHING_FACTOR = 0.002 # spline smoothness
+VIA_POINT_DIST = 0.005    # downsample 5mm
+SMOOTHING_FACTOR = 0.0002 # spline smoothness
 
 # Safe Heights
-SAFE_Z_FLOOR = 0.015
+SAFE_Z_FLOOR = 0.01
 SAFE_X_WALL = 0.05
 
 # Pen offsets
@@ -36,12 +36,12 @@ UR5_DT = 0.008  #s
 
 # Wall/Floor Offsets
 if DRAW_MODE == 'WALL':
-    START_POS_H = -0.15  
+    START_POS_H = -0.15
     START_POS_V = 0.50
     PLANE_LEVEL = 0.50
 elif DRAW_MODE == 'FLOOR':
     START_POS_H = -0.15+0.20
-    START_POS_V = 0.60+0.20
+    START_POS_V = 0.40+0.20
     PLANE_LEVEL = 0.0
 
 # ======================================================================
@@ -95,56 +95,6 @@ def generate_linear_segment(points, speed, dt, start_t):
     traj.append([t, pos[0], pos[1], pos[2], 0,0,0,0,0,0])
     return traj, t
 
-def compute_cubic_segment(p0, p1, vmax, amax, dt, start_t, v0=None, v1=None):
-    """
-    Generate a cubic polynomial trajectory between p0 → p1
-    with velocity & acceleration constraints.
-    """
-
-    p0 = np.array(p0, dtype=float)
-    p1 = np.array(p1, dtype=float)
-
-    # If no boundary velocity given, assume 0
-    if v0 is None:
-        v0 = np.zeros(3)
-    if v1 is None:
-        v1 = np.zeros(3)
-
-    # segment length
-    L = np.linalg.norm(p1 - p0)
-
-    # time needed from v_max and a_max
-    T_vel = L / vmax
-    T_acc = np.sqrt(6 * L / amax)
-
-    T = max(T_vel, T_acc, dt)
-
-    # cubic coefficients
-    # p(t) = a0 + a1 t + a2 t^2 + a3 t^3
-    a0 = p0
-    a1 = v0
-    a2 = (3*(p1 - p0)/T**2) - (2 * v0 + v1)/T
-    a3 = (2*(p0 - p1)/T**3) + (v0 + v1)/T**2
-
-    # generate trajectory
-    traj = []
-    t = start_t
-    n_step = int(np.ceil(T/dt))
-
-    for i in range(n_step):
-        tau = i * dt
-        pos = a0 + a1*tau + a2*tau**2 + a3*tau**3
-        vel = a1 + 2*a2*tau + 3*a3*tau**2
-        acc = 2*a2 + 6*a3*tau
-        traj.append([t, pos[0],pos[1],pos[2], vel[0],vel[1],vel[2], acc[0],acc[1],acc[2]])
-        t += dt
-
-    # final point (exact)
-    traj.append([t, p1[0],p1[1],p1[2], 0,0,0, 0,0,0])
-
-    return traj, t
-
-
 def generate_spline_segment(points, speed, dt, start_t, smooth_factor):
     """Generate smooth B-spline segment"""
     if len(points)<4:
@@ -168,31 +118,6 @@ def generate_spline_segment(points, speed, dt, start_t, smooth_factor):
                      vel_eval[i,0], vel_eval[i,1], vel_eval[i,2],
                      acc_eval[i,0], acc_eval[i,1], acc_eval[i,2]])
     return traj, start_t + duration
-
-def generate_cubic_path(points, vmax, amax, dt, start_t):
-    traj = []
-    t = start_t
-    v_prev = np.zeros(3)
-
-    for i in range(len(points)-1):
-        p0 = points[i]
-        p1 = points[i+1]
-
-        seg, t = compute_cubic_segment(
-            p0, p1,
-            vmax=vmax,
-            amax=amax,
-            dt=dt,
-            start_t=t,
-            v0=v_prev,
-            v1=np.zeros(3)
-        )
-
-        traj.extend(seg)
-        v_prev = seg[-1][4:7]   # last velocity
-
-    return traj, t
-
 
 # ======================================================================
 # 3. MAIN WORKFLOW
@@ -263,8 +188,6 @@ for stroke in strokes_points:
         full_traj.extend(seg)
     # Draw pen-down
     seg, t_curr = generate_spline_segment(stroke, TARGET_SPEED_DRAW, UR5_DT, t_curr, SMOOTHING_FACTOR)
-    # seg, t_curr = generate_cubic_path(via_pts, vmax=TARGET_SPEED_DRAW, amax=0.3, dt=UR5_DT, start_t=t_curr)
-
     full_traj.extend(seg)
     last_pos = stroke[-1]
 
@@ -274,134 +197,69 @@ print("4. Saving CSV...")
 cols = ['t','x','y','z','vx','vy','vz','ax','ay','az']
 df = pd.DataFrame(full_traj, columns=cols)
 
+from scipy.signal import savgol_filter
 
-# ใส่หลังสร้าง df จาก full_traj
-from scipy.signal import savgol_filter, medfilt
+# df: columns t,x,y,z
+# 1) ทำ resample ให้ dt สม่ำเสมอ (ใช้ UR5_DT)
+dt = UR5_DT  # เช่น 0.008
+t_new = np.arange(df['t'].iloc[0], df['t'].iloc[-1], dt)
+# สร้าง interpolation ของตำแหน่ง
 from scipy.interpolate import interp1d
+fx = interp1d(df['t'], df['x'], kind='linear')
+fy = interp1d(df['t'], df['y'], kind='linear')
+fz = interp1d(df['t'], df['z'], kind='linear')
+x_new = fx(t_new); y_new = fy(t_new); z_new = fz(t_new)
 
-# PARAMETERS (ปรับได้)
-dt_target = UR5_DT            # เช่น 0.008
-savgol_win = 11              # ต้องเป็นคี่, เลือกตามความยาว (11, 21,...)
-savgol_poly = 3
-median_kernel = 5            # สำหรับ median filter ของ velocity
-VEL_CLAMP = 0.8              # m/s (ปรับตาม UR5 limit)
-ACC_CLAMP = 2.0              # m/s^2 (ปรับตาม UR5 limit)
-spike_threshold_ratio = 6.0  # ถ้าขึ้น/ลงของ speed เกิน median*ratio ถือเป็น spike
+# 2) Smooth ตำแหน่งด้วย Savitzky-Golay
+# window_length ต้องเป็นเลขคี่ และ <= len(t_new)
+win = 11 if len(t_new) >= 11 else (len(t_new)//2)*2+1
+poly = 3
+x_s = savgol_filter(x_new, win, poly)
+y_s = savgol_filter(y_new, win, poly)
+z_s = savgol_filter(z_new, win, poly)
 
-# assume df = pd.DataFrame(full_traj, columns=cols) with cols ['t','x','y','z',...]
-t0 = df['t'].iloc[0]
-tend = df['t'].iloc[-1]
-t_new = np.arange(t0, tend + 1e-9, dt_target)
+# 3) คำนวณ vel & acc (central difference)
+vx = np.gradient(x_s, dt)
+vy = np.gradient(y_s, dt)
+vz = np.gradient(z_s, dt)
+ax = np.gradient(vx, dt)
+ay = np.gradient(vy, dt)
+az = np.gradient(vz, dt)
 
-# 1) Interpolate positions to uniform grid
-fx = interp1d(df['t'], df['x'], kind='linear', fill_value="extrapolate")
-fy = interp1d(df['t'], df['y'], kind='linear', fill_value="extrapolate")
-fz = interp1d(df['t'], df['z'], kind='linear', fill_value="extrapolate")
-x_new = fx(t_new)
-y_new = fy(t_new)
-z_new = fz(t_new)
-
-# 2) Smooth positions (Savitzky-Golay)
-# adjust window to length of signal; must be odd and <= len
-def choose_win(L, win):
-    if win >= L:
-        return max(3, (L//2)*2+1 - (1 - (L%2)))  # fallback small odd
-    return win
-win = choose_win(len(t_new), savgol_win)
-x_s = savgol_filter(x_new, win, savgol_poly)
-y_s = savgol_filter(y_new, win, savgol_poly)
-z_s = savgol_filter(z_new, win, savgol_poly)
-
-# 3) Compute vel & acc by central difference
-vx = np.gradient(x_s, dt_target)
-vy = np.gradient(y_s, dt_target)
-vz = np.gradient(z_s, dt_target)
-ax = np.gradient(vx, dt_target)
-ay = np.gradient(vy, dt_target)
-az = np.gradient(vz, dt_target)
-speed = np.sqrt(vx**2 + vy**2 + vz**2)
-
-# 4) Detect spikes in speed via diff and median rule
-dv = np.abs(np.diff(speed, prepend=speed[0]))
-med = np.median(dv)
-spike_idx = np.where(dv > med * spike_threshold_ratio)[0]
-
-# Replace spikes by linear interpolation of neighbors (per axis)
+# 4) ตรวจหา spike ใน velocity (threshold ตาม delta หรือ max accel)
+v_norm = np.sqrt(vx**2 + vy**2 + vz**2)
+# ตัวอย่าง: ถ้าขึ้น/ลงเกิน 3x median diff => replace โดย linear interp
+dv = np.abs(np.diff(v_norm, prepend=v_norm[0]))
+thr = np.median(dv) * 8.0
+spike_idx = np.where(dv > thr)[0]
+# แก้: แทนค่าด้วย interpolation ของเพื่อนบ้าน
 for i in spike_idx:
-    left = max(0, i-3)
-    right = min(len(t_new)-1, i+3)
-    # interpolate x_s,y_s,z_s at i from neighbors
-    x_s[i] = np.median(x_s[left:right+1])
-    y_s[i] = np.median(y_s[left:right+1])
-    z_s[i] = np.median(z_s[left:right+1])
+    left = max(0, i-3); right = min(len(v_norm)-1, i+3)
+    v_norm[i] = np.median(v_norm[left:right+1])
+# (ถ้าต้องแก้ vx,vy,vz ให้ทำแยกแกนด้วยวิธีคล้ายกัน)
 
-# Recompute after replacement
-vx = np.gradient(x_s, dt_target)
-vy = np.gradient(y_s, dt_target)
-vz = np.gradient(z_s, dt_target)
-ax = np.gradient(vx, dt_target)
-ay = np.gradient(vy, dt_target)
-az = np.gradient(vz, dt_target)
-speed = np.sqrt(vx**2 + vy**2 + vz**2)
-
-# 5) median filter on velocity components (optional)
-vx = medfilt(vx, kernel_size=median_kernel)
-vy = medfilt(vy, kernel_size=median_kernel)
-vz = medfilt(vz, kernel_size=median_kernel)
-ax = medfilt(ax, kernel_size=median_kernel)
-ay = medfilt(ay, kernel_size=median_kernel)
-az = medfilt(az, kernel_size=median_kernel)
-speed = np.sqrt(vx**2 + vy**2 + vz**2)
-
-# 6) Clamp velocity and acceleration (if exceed limits)
-v_norm = np.linalg.norm(np.vstack([vx,vy,vz]).T, axis=1)
-v_scale = np.minimum(1.0, VEL_CLAMP / (v_norm + 1e-9))
-vx *= v_scale; vy *= v_scale; vz *= v_scale
-
-a_norm = np.linalg.norm(np.vstack([ax,ay,az]).T, axis=1)
-a_scale = np.minimum(1.0, ACC_CLAMP / (a_norm + 1e-9))
-ax *= a_scale; ay *= a_scale; az *= a_scale
-
-# 7) Build final DataFrame
+# 5) สร้าง DataFrame ใหม่
 df_fixed = pd.DataFrame({
-    't': t_new,
-    'x': x_s, 'y': y_s, 'z': z_s,
+    't': t_new, 'x': x_s, 'y': y_s, 'z': z_s,
     'vx': vx, 'vy': vy, 'vz': vz,
-    'ax': ax, 'ay': ay, 'az': az
+    'ax': ax, 'ay': ay, 'az': az,
 })
-
-# quick check plot (optional)
-import matplotlib.pyplot as plt
-plt.figure(figsize=(9,6))
-plt.subplot(211)
-plt.plot(df['t'], np.sqrt(df['vx']**2 + df['vy']**2 + df['vz']**2), alpha=0.4, label='orig speed')
-plt.plot(df_fixed['t'], np.sqrt(df_fixed['vx']**2 + df_fixed['vy']**2 + df_fixed['vz']**2), label='fixed speed')
-plt.legend(); plt.grid(True)
-plt.title('Speed before/after fix')
-plt.subplot(212, projection='3d')
-plt.plot(df_fixed['x'], df_fixed['y'], df_fixed['z'])
-plt.title('3D path after smoothing')
-plt.tight_layout()
-plt.show()
-
 
 df_fixed.to_csv(OUTPUT_CSV, index=False, float_format='%.6f')
 print(f"✅ Saved: {OUTPUT_CSV}")
 
-# # Plot for validation
-# plt.figure(figsize=(10,8))
-# v_mag = np.sqrt(df_fixed['vx']**2 + df_fixed['vy']**2 + df_fixed['vz']**2)
-# plt.subplot(2,1,1)
-# plt.plot(df_fixed['t'], v_mag)
-# plt.title("Velocity Profile")
-# plt.xlabel("Time (s)")
-# plt.ylabel("Speed (m/s)")
-# plt.grid(True)
+# Plot for validation
+plt.figure(figsize=(10,8))
+v_mag = np.sqrt(df_fixed['vx']**2 + df_fixed['vy']**2 + df_fixed['vz']**2)
+plt.subplot(2,1,1)
+plt.plot(df_fixed['t'], v_mag)
+plt.title("Velocity Profile")
+plt.xlabel("Time (s)")
+plt.ylabel("Speed (m/s)")
+plt.grid(True)
 
-# ax = plt.subplot(2,1,2, projection='3d')
-# ax.plot(df_fixed['x'], df_fixed['y'], df_fixed['z'], linewidth=0.5)
-# ax.set_title("Trajectory")
-# plt.tight_layout()
-# plt.show()
-
-
+ax = plt.subplot(2,1,2, projection='3d')
+ax.plot(df_fixed['x'], df_fixed['y'], df_fixed['z'], linewidth=0.5)
+ax.set_title("Trajectory")
+plt.tight_layout()
+plt.show()
