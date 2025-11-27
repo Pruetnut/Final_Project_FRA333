@@ -10,7 +10,7 @@ from scipy.interpolate import splprep, splev
 
 DRAW_MODE = 'FLOOR'      # 'WALL' or 'FLOOR'
 IMAGE_PATH = "image/FIBO.png"
-OUTPUT_CSV = f"2ur5_Trajectory{DRAW_MODE.lower()}.csv"
+OUTPUT_CSV = f"3ur5_Trajectory{DRAW_MODE.lower()}.csv"
 
 # Workspace
 CANVAS_WIDTH_M = 0.8     # drawing width in meters
@@ -36,12 +36,12 @@ UR5_DT = 0.008  #s
 
 # Wall/Floor Offsets
 if DRAW_MODE == 'WALL':
-    START_POS_H = -0.15
+    START_POS_H = -0.15  
     START_POS_V = 0.50
     PLANE_LEVEL = 0.50
 elif DRAW_MODE == 'FLOOR':
-    START_POS_H = -0.15-0.20
-    START_POS_V = 0.60-0.20
+    START_POS_H = -0.15+0.20
+    START_POS_V = 0.60+0.20
     PLANE_LEVEL = 0.0
 
 # ======================================================================
@@ -95,6 +95,56 @@ def generate_linear_segment(points, speed, dt, start_t):
     traj.append([t, pos[0], pos[1], pos[2], 0,0,0,0,0,0])
     return traj, t
 
+def compute_cubic_segment(p0, p1, vmax, amax, dt, start_t, v0=None, v1=None):
+    """
+    Generate a cubic polynomial trajectory between p0 → p1
+    with velocity & acceleration constraints.
+    """
+
+    p0 = np.array(p0, dtype=float)
+    p1 = np.array(p1, dtype=float)
+
+    # If no boundary velocity given, assume 0
+    if v0 is None:
+        v0 = np.zeros(3)
+    if v1 is None:
+        v1 = np.zeros(3)
+
+    # segment length
+    L = np.linalg.norm(p1 - p0)
+
+    # time needed from v_max and a_max
+    T_vel = L / vmax
+    T_acc = np.sqrt(6 * L / amax)
+
+    T = max(T_vel, T_acc, dt)
+
+    # cubic coefficients
+    # p(t) = a0 + a1 t + a2 t^2 + a3 t^3
+    a0 = p0
+    a1 = v0
+    a2 = (3*(p1 - p0)/T**2) - (2 * v0 + v1)/T
+    a3 = (2*(p0 - p1)/T**3) + (v0 + v1)/T**2
+
+    # generate trajectory
+    traj = []
+    t = start_t
+    n_step = int(np.ceil(T/dt))
+
+    for i in range(n_step):
+        tau = i * dt
+        pos = a0 + a1*tau + a2*tau**2 + a3*tau**3
+        vel = a1 + 2*a2*tau + 3*a3*tau**2
+        acc = 2*a2 + 6*a3*tau
+        traj.append([t, pos[0],pos[1],pos[2], vel[0],vel[1],vel[2], acc[0],acc[1],acc[2]])
+        t += dt
+
+    # final point (exact)
+    traj.append([t, p1[0],p1[1],p1[2], 0,0,0, 0,0,0])
+
+    return traj, t
+
+
 def generate_spline_segment(points, speed, dt, start_t, smooth_factor):
     """Generate smooth B-spline segment"""
     if len(points)<4:
@@ -118,6 +168,31 @@ def generate_spline_segment(points, speed, dt, start_t, smooth_factor):
                      vel_eval[i,0], vel_eval[i,1], vel_eval[i,2],
                      acc_eval[i,0], acc_eval[i,1], acc_eval[i,2]])
     return traj, start_t + duration
+
+def generate_cubic_path(points, vmax, amax, dt, start_t):
+    traj = []
+    t = start_t
+    v_prev = np.zeros(3)
+
+    for i in range(len(points)-1):
+        p0 = points[i]
+        p1 = points[i+1]
+
+        seg, t = compute_cubic_segment(
+            p0, p1,
+            vmax=vmax,
+            amax=amax,
+            dt=dt,
+            start_t=t,
+            v0=v_prev,
+            v1=np.zeros(3)
+        )
+
+        traj.extend(seg)
+        v_prev = seg[-1][4:7]   # last velocity
+
+    return traj, t
+
 
 # ======================================================================
 # 3. MAIN WORKFLOW
@@ -188,6 +263,8 @@ for stroke in strokes_points:
         full_traj.extend(seg)
     # Draw pen-down
     seg, t_curr = generate_spline_segment(stroke, TARGET_SPEED_DRAW, UR5_DT, t_curr, SMOOTHING_FACTOR)
+    # seg, t_curr = generate_cubic_path(via_pts, vmax=TARGET_SPEED_DRAW, amax=0.3, dt=UR5_DT, start_t=t_curr)
+
     full_traj.extend(seg)
     last_pos = stroke[-1]
 
