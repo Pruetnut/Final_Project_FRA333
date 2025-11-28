@@ -18,11 +18,11 @@ Z_DRAW = 0.00
 OFFSET_X = 0.3              
 OFFSET_Y = 0.3              
 
-# --- TUNING PARAMETER (สำคัญตรงนี้) ---
-# ค่านี้ยิ่งมาก = จุดยิ่งน้อย (รูปเหลี่ยมขึ้น)
-# ค่านี้ยิ่งน้อย = จุดยิ่งเยอะ (รูปโค้งเนียนเหมือนเดิม)
-# แนะนำ: 0.001 ถึง 0.005
-APPROX_EPSILON_FACTOR = 0.005
+# --- TUNING PARAMETER (ลดจุดแบบข้าม Pixel) ---
+# 1 = เก็บทุกจุด (ไม่ลดเลย)
+# 2 = เก็บ 1 ข้าม 1
+# 5 = เก็บ 1 ข้าม 4 (ลดลง 5 เท่า)
+SKIP_PIXEL_STEP = 4
 
 # --- HELPER FUNCTIONS ---
 # (ตัด generate_segment ออก เพราะเราจะให้ Ruckig เป็นคนทำ)
@@ -77,14 +77,24 @@ for i, cnt in enumerate(contours):
     if len(cnt) < 15: continue
     total_points_original += len(cnt)
     
-    # 1. คำนวณความยาวเส้นรอบรูป
-    epsilon = APPROX_EPSILON_FACTOR * cv2.arcLength(cnt, True)
-    # 2. คำนวณเส้นใหม่ที่ลดจุดแล้ว (Approx)
-    approx_cnt = cv2.approxPolyDP(cnt, epsilon, closed=False) # closed=False ถ้าเป็นเส้นวาด
+    # แปลงเป็น Array (N, 2)
+    raw_points = cnt.reshape(-1, 2)
+    total_points_original += len(raw_points)
     
-    total_points_reduced += len(approx_cnt)
-    
-    points = cnt.reshape(-1, 2)
+    # =======================================================
+    # LOGIC ใหม่: ลดจุดแบบข้าม Pixel (Fixed Step)
+    # =======================================================
+    # 1. เลือกจุดทุกๆ step (Slicing)
+    reduced_points = raw_points[::SKIP_PIXEL_STEP]
+    # 2. (สำคัญ) ต้องมั่นใจว่า "จุดสุดท้าย" ของเส้นไม่หายไป
+    # เพราะการ slice อาจจะตัดหางทิ้งถ้าจำนวนหารไม่ลงตัว
+    if not np.array_equal(reduced_points[-1], raw_points[-1]):
+        reduced_points = np.vstack((reduced_points, raw_points[-1]))
+        
+    points = reduced_points # ใช้จุดชุดใหม่นี้ในการทำงานต่อ
+    total_points_reduced += len(points)
+    # =======================================================
+
     
     # คำนวณพิกัดจุดเริ่มต้น (Start Point)
     start_pixel = points[0]
@@ -92,14 +102,10 @@ for i, cnt in enumerate(contours):
     start_y = offset_y - (start_pixel[1] * scale_factor)
     
     # A. TRAVEL: เคลื่อนไปเหนือจุดเริ่ม (Z_SAFE)
-    key_waypoints.append({
-        'x': start_x, 'y': start_y, 'z': Z_SAFE, 'type': 0
-    })
+    key_waypoints.append({'x': start_x, 'y': start_y, 'z': Z_SAFE, 'type': 0})
     
     # B. PEN DOWN: กดปากกาลง (Z_DRAW)
-    key_waypoints.append({
-        'x': start_x, 'y': start_y, 'z': Z_DRAW, 'type': 0
-    })
+    key_waypoints.append({'x': start_x, 'y': start_y, 'z': Z_DRAW, 'type': 0})
     
     # C. DRAWING: เก็บจุดทั้งหมดในเส้น (Z_DRAW)
     # Ruckig จะทำหน้าที่วิ่งผ่านจุดเหล่านี้ให้เอง
@@ -114,15 +120,14 @@ for i, cnt in enumerate(contours):
     last_x = (last_pixel[0] * scale_factor) + offset_x
     last_y = offset_y - (last_pixel[1] * scale_factor)
     
-    key_waypoints.append({
-        'x': last_x, 'y': last_y, 'z': Z_SAFE, 'type': 0
-    })
+    key_waypoints.append({'x': last_x, 'y': last_y, 'z': Z_SAFE, 'type': 0})
 
-# สรุปผลการลดจุด
-print(f"--- Reduction Summary ---")
-print(f"Original Points (Raw): {total_points_original}")
-print(f"Reduced Points (Approx): {total_points_reduced}")
-print(f"Reduction Ratio: {(1 - total_points_reduced/total_points_original)*100:.2f}% removed")
+# สรุปผล
+print(f"--- Reduction Summary (Step={SKIP_PIXEL_STEP}) ---")
+print(f"Original Points: {total_points_original}")
+print(f"Reduced Points : {total_points_reduced}")
+print(f"Removed: {(1 - total_points_reduced/total_points_original)*100:.2f}%")
+
 
 # --- 4. Save CSV ---
 df = pd.DataFrame(key_waypoints)
