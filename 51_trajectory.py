@@ -11,7 +11,7 @@ INPUT_CSV = "Waypoints_For_Ruckig.csv"       # ไฟล์ Input จากข�
 OUTPUT_CSV = "Final_Trajectory_Full_Data.csv" # ไฟล์ Output ที่สมบูรณ์
 
 # Robot & Ruckig Settings
-CONTROL_CYCLE = 0.008  # 8ms (มาตรฐาน UR5)
+CONTROL_CYCLE = 0.02  # 8ms (มาตรฐาน UR5)
 
 # Limits (ปรับความเร็ว/ความนุ่มนวลตรงนี้)
 # หน่วย: m/s, m/s^2, m/s^3
