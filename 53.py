@@ -2,23 +2,24 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
-import roboticstoolbox as rtb
+from scipy.interpolate import splprep, splev
 import os
 
 # --- 1. CONFIGURATION ---
 INPUT_CSV = "Waypoints_For_Ruckig.csv"
-OUTPUT_CSV = "Final_Trajectory_SinglePath.csv"
+OUTPUT_CSV = "Final_Trajectory_SmoothSpline.csv"
 
 # Robot Settings
-DT = 0.008  # Sampling time (8ms)
+DT = 0.02  # Sampling time (8ms)
 
-# --- SPEED SETTINGS (กำหนดความเร็วตรงนี้) ---
-SPEED_TRAVEL = 0.25  # m/s (ความเร็วตอนยก/เคลื่อนย้าย) - เร็ว
-SPEED_DRAW   = 0.05  # m/s (ความเร็วตอนจิ้มวาด) - ช้าเพื่อให้แม่น
+# Target Speeds
+SPEED_TRAVEL = 0.25 # m/s (ตอนยก)
+SPEED_DRAW   = 0.05 # m/s (ตอนวาด - เอาช้าๆ ให้ชัวร์)
 
-# ความนุ่มนวล
-ACCEL_TIME = 0.1     # เวลาที่ใช้เร่งความเร็ว (s)
-BLEND_RADIUS = 0.005 # รัศมีตีโค้ง (5mm)
+# *** ตัวแปรสำคัญที่สุด ***
+# 0.0 = ผ่านทุกจุดเป๊ะๆ (แต่อาจจะสวิงบ้างถ้าจุดไม่เนียน)
+# 0.0001 - 0.001 = ยอมให้คลาดเคลื่อนนิดเดียว เพื่อแลกกับความสมูท (แนะนำ!)
+SMOOTHING_FACTOR = 0.0005 
 
 # --- 2. LOAD DATA ---
 if not os.path.exists(INPUT_CSV):
@@ -26,134 +27,157 @@ if not os.path.exists(INPUT_CSV):
     exit()
 
 df = pd.read_csv(INPUT_CSV)
-
-# แปลง type ให้เป็นตัวเลขแน่นอน (จัดการ 'HOME' หรือ string อื่นๆ ให้เป็น 0)
 df['type'] = pd.to_numeric(df['type'], errors='coerce').fillna(0).astype(int)
 waypoints = df.to_dict('records')
 
 print(f"Loaded {len(waypoints)} waypoints.")
 
-# --- 3. PREPARE SINGLE PATH DATA ---
-# เราจะรวบทุกจุดเป็น list เดียว แต่จะคำนวณ "เวลา" ของแต่ละช่วงแยกกัน
+# --- 3. HELPER FUNCTIONS ---
 
-via_points = []
-segment_times = [] # เก็บเวลาที่ยอมให้ใช้ในแต่ละช่วง
-
-# ดึงจุดแรก
-via_points.append([waypoints[0]['x'], waypoints[0]['y'], waypoints[0]['z']])
-
-print("Calculating time duration for each segment...")
-
-for i in range(len(waypoints) - 1):
-    curr_wp = waypoints[i]
-    next_wp = waypoints[i+1]
+def generate_spline_trajectory(points, target_speed, dt, s_factor=0):
+    """
+    สร้าง Trajectory ด้วย B-Spline (รับประกันความสมูท)
+    """
+    points = np.array(points)
     
-    p1 = np.array([curr_wp['x'], curr_wp['y'], curr_wp['z']])
-    p2 = np.array([next_wp['x'], next_wp['y'], next_wp['z']])
-    
-    # เก็บจุดปลายทาง
-    via_points.append(p2)
-    
-    # คำนวณระยะทาง
-    dist = np.linalg.norm(p2 - p1)
-    
-    # ถ้าจุดซ้ำกัน (ระยะเป็น 0) ให้ข้ามไป (ใส่เวลาน้อยมากๆ เพื่อกัน error)
-    if dist < 1e-6:
-        segment_times.append(0.01)
-        continue
+    # 1. Cleaning: ลบจุดซ้ำ (Spline ไม่ชอบจุดทับกัน)
+    # เช็คระยะห่างระหว่างจุด
+    diff = np.linalg.norm(np.diff(points, axis=0), axis=1)
+    # เก็บจุดแรก + จุดที่มีระยะห่าง > 0
+    valid_idx = np.hstack(([True], diff > 1e-6))
+    points = points[valid_idx]
 
-    # --- LOGIC กำหนดความเร็ว ---
-    # ถ้าจุดปลายทางเป็น Type 1 (Draw) แสดงว่าช่วงนี้คือการวาด -> ใช้ความเร็วช้า
-    # ถ้าจุดปลายทางเป็น Type 0 (Travel) แสดงว่าช่วงนี้คือการยก -> ใช้ความเร็วเร็ว
-    if next_wp['type'] == 1:
-        target_speed = SPEED_DRAW
-    else:
-        target_speed = SPEED_TRAVEL
+    # ถ้าจุดน้อยเกินไป ทำ Spline ไม่ได้ (ต้องมีอย่างน้อย 4 จุดสำหรับ cubic spline)
+    if len(points) < 4:
+        # Fallback: ใช้ Linear Interpolation ธรรมดา
+        total_dist = np.sum(np.linalg.norm(np.diff(points, axis=0), axis=1))
+        duration = max(total_dist / target_speed, 2 * dt)
+        num_steps = int(duration / dt)
+        t_eval = np.linspace(0, 1, num_steps)
         
-    # คำนวณเวลาที่ต้องใช้ (Time = Distance / Speed)
-    duration = dist / target_speed
+        # Linear interp
+        pos = np.zeros((num_steps, 3))
+        for i in range(3):
+            pos[:, i] = np.interp(t_eval, np.linspace(0, 1, len(points)), points[:, i])
+        
+        vel = np.gradient(pos, dt, axis=0)
+        acc = np.gradient(vel, dt, axis=0)
+        return pos, vel, acc
+
+    # 2. คำนวณระยะทางรวม เพื่อหาเวลาที่ต้องใช้ (Duration)
+    # เพื่อคุมความเร็วให้ได้ตาม target_speed
+    dists = np.linalg.norm(np.diff(points, axis=0), axis=1)
+    total_len = np.sum(dists)
+    total_time = total_len / target_speed
     
-    # ป้องกันเวลาสั้นเกินไปจน Robot ทำไม่ทัน (Limit ขั้นต่ำไว้ที่ 0.016s หรือ 2 ticks)
-    duration = max(duration, 0.016)
+    # จำนวน Sampling points
+    num_samples = int(total_time / dt)
+    if num_samples < 2: num_samples = 2
     
-    segment_times.append(duration)
+    # 3. สร้าง B-Spline (Curve Fitting)
+    # tck คือ parameters ของเส้นโค้ง, u คือตำแหน่งบนเส้น (0 ถึง 1)
+    # s (smoothing) คือตัวช่วยลดการสวิง!
+    try:
+        tck, u = splprep(points.T, s=s_factor, k=3) # k=3 means Cubic Spline (C2 continuous)
+    except Exception as e:
+        print(f"Spline Error: {e}, using raw points")
+        return points, np.zeros_like(points), np.zeros_like(points)
 
-# แปลงเป็น Numpy Array
-via_points = np.array(via_points)
-segment_times = np.array(segment_times)
+    # 4. Evaluate (สุ่มจุดบนเส้นโค้งออกมาตามเวลา)
+    u_new = np.linspace(0, 1, num_samples)
+    
+    # คำนวณ Position
+    x, y, z = splev(u_new, tck)
+    pos = np.vstack((x, y, z)).T
+    
+    # คำนวณ Velocity (Derivative 1)
+    # หมายเหตุ: splev ให้ diff เทียบกับ u (0->1) ต้องแปลงเป็นเทียบเวลา t (0->TotalTime)
+    # v_real = v_spline * (du/dt) = v_spline * (1/TotalTime)
+    x_d1, y_d1, z_d1 = splev(u_new, tck, der=1)
+    vel = np.vstack((x_d1, y_d1, z_d1)).T * (1.0 / total_time)
+    
+    # คำนวณ Acceleration (Derivative 2)
+    # a_real = a_spline * (1/TotalTime)^2
+    x_d2, y_d2, z_d2 = splev(u_new, tck, der=2)
+    acc = np.vstack((x_d2, y_d2, z_d2)).T * (1.0 / total_time**2)
+    
+    return pos, vel, acc
 
-print(f"Total Segments: {len(segment_times)}")
-print(f"Total Estimated Time: {np.sum(segment_times):.2f} seconds")
+# --- 4. MAIN LOOP ---
+full_traj_rows = []
+global_t = 0.0
 
-# --- 4. GENERATE TRAJECTORY (SINGLE SHOT) ---
-print("Computing Global Trajectory (mstraj)...")
+i = 0
+while i < len(waypoints) - 1:
+    p_curr = waypoints[i]
+    
+    # LOGIC: แบ่ง Chunk เหมือนเดิม (Travel vs Draw)
+    if waypoints[i]['type'] == 1 and waypoints[i+1]['type'] == 1:
+        # === DRAWING CHUNK (Spline Mode) ===
+        draw_chunk = [[p_curr['x'], p_curr['y'], p_curr['z']]]
+        k = i + 1
+        while k < len(waypoints) and waypoints[k]['type'] == 1:
+            draw_chunk.append([waypoints[k]['x'], waypoints[k]['y'], waypoints[k]['z']])
+            k += 1
+            
+        # ใช้ Spline สร้างเส้นโค้งที่สมูทที่สุด
+        pos, vel, acc = generate_spline_trajectory(draw_chunk, SPEED_DRAW, DT, s_factor=SMOOTHING_FACTOR)
+        
+        i = k - 1
+        seg_type = 1
+        
+    else:
+        # === TRAVEL CHUNK (Linear/Spline Mode) ===
+        # ช่วงเดินทางสั้นๆ ใช้ Spline แบบเส้นตรง (k=1) หรือ Spline ปกติก็ได้
+        # แต่เพื่อความง่าย ใช้ฟังก์ชันเดียวกันแต่จุดน้อย
+        p_next = waypoints[i+1]
+        travel_chunk = [
+            [p_curr['x'], p_curr['y'], p_curr['z']],
+            [p_next['x'], p_next['y'], p_next['z']]
+        ]
+        
+        pos, vel, acc = generate_spline_trajectory(travel_chunk, SPEED_TRAVEL, DT, s_factor=0)
+        
+        i += 1
+        seg_type = 0
 
-# rtb.mstraj คือพระเอกของงานนี้
-# dt: คือ array บอกเวลาของแต่ละช่วง (ไม่ใช่ sampling time)
-# tacc: เวลาเร่ง
-# qdmax: ไม่ต้องใส่ เพราะเรากำหนดผ่าน dt (segment_times) แล้ว
-traj = rtb.mstraj(via_points, dt=DT, tacc=ACCEL_TIME, qdmax=SPEED_DRAW)
+    # Record Data
+    for j in range(len(pos)):
+        full_traj_rows.append({
+            't': global_t,
+            'x': pos[j,0], 'y': pos[j,1], 'z': pos[j,2],
+            'vx': vel[j,0], 'vy': vel[j,1], 'vz': vel[j,2],
+            'ax': acc[j,0], 'ay': acc[j,1], 'az': acc[j,2],
+            'type': seg_type
+        })
+        global_t += DT
 
-# ดึงข้อมูล
-pos = traj.q
-# คำนวณ v, a ด้วยการ diff
-vel = np.gradient(pos, DT, axis=0)
-acc = np.gradient(vel, DT, axis=0)
-
-# --- 5. MAPPING TYPE BACK (Map ค่า Type กลับมาใส่ใน Trajectory) ---
-# เนื่องจาก mstraj มันรวมทุกอย่างเป็นเส้นเดียว เราต้อง map type กลับมาเพื่อให้รู้ว่าช่วงไหนคืออะไร
-# วิธีแบบง่าย: ใช้ KDTree หาว่าจุด trajectory นี้ ใกล้ waypoint ไหนที่สุด
-from scipy.spatial import cKDTree
-
-# สร้าง Tree จาก Waypoint เดิม
-waypoint_coords = df[['x', 'y', 'z']].values
-tree = cKDTree(waypoint_coords)
-
-# หา Type ของแต่ละจุดใน Trajectory
-print("Mapping types back to trajectory...")
-_, indices = tree.query(pos) # หา index ของ waypoint ที่ใกล้ที่สุด
-traj_types = df.iloc[indices]['type'].values
-
-# --- 6. SAVE & PLOT ---
-# สร้าง DataFrame ผลลัพธ์
-df_final = pd.DataFrame({
-    't': np.arange(len(pos)) * DT,
-    'x': pos[:, 0], 'y': pos[:, 1], 'z': pos[:, 2],
-    'vx': vel[:, 0], 'vy': vel[:, 1], 'vz': vel[:, 2],
-    'ax': acc[:, 0], 'ay': acc[:, 1], 'az': acc[:, 2],
-    'type': traj_types
-})
-
+# --- 5. SAVE & PLOT ---
+df_final = pd.DataFrame(full_traj_rows)
 df_final.to_csv(OUTPUT_CSV, index=False)
-print(f"Done! Saved {len(df_final)} points to {OUTPUT_CSV}")
+print(f"Saved {len(df_final)} points to {OUTPUT_CSV}")
 
 # === VISUALIZATION ===
 fig = plt.figure(figsize=(12, 6))
 
 # Plot 1: 3D Path
 ax1 = fig.add_subplot(121, projection='3d')
-plot_df = df_final.iloc[::5] # Downsample
-
-# กำหนดสี: Type 1=Draw(เขียว), Type 0=Travel(แดง)
+plot_df = df_final.iloc[::5]
 colors = ['green' if t == 1 else 'red' for t in plot_df['type']]
 ax1.scatter(plot_df['x'], plot_df['y'], plot_df['z'], c=colors, s=1)
-ax1.set_title("Single Continuous Path (mstraj)")
+ax1.set_title("Spline Path (Ideally Smooth)")
 ax1.set_xlabel("X"); ax1.set_ylabel("Y"); ax1.set_zlabel("Z")
 
-# Plot 2: Speed Profile
+# Plot 2: Velocity Profile
 ax2 = fig.add_subplot(122)
 speed = np.sqrt(df_final['vx']**2 + df_final['vy']**2 + df_final['vz']**2)
-ax2.plot(df_final['t'], speed, label='Speed', color='black', linewidth=1)
+ax2.plot(df_final['t'], speed, label='Actual Speed', color='black', linewidth=1)
 
-# Highlight Drawing Areas
-mask = df_final['type'] == 1
-ax2.fill_between(df_final['t'], 0, np.max(speed), where=mask, color='green', alpha=0.2, label='Drawing')
+# Target Speed Line
+ax2.plot(df_final['t'], [SPEED_DRAW if t==1 else SPEED_TRAVEL for t in df_final['type']], 
+         color='orange', linestyle='--', alpha=0.5, label='Target Speed')
 
-# ขีดเส้นความเร็วเป้าหมายให้ดู
-ax2.axhline(y=SPEED_DRAW, color='green', linestyle='--', alpha=0.5, label='Target Draw Speed')
-ax2.axhline(y=SPEED_TRAVEL, color='red', linestyle='--', alpha=0.5, label='Target Travel Speed')
-
-ax2.set_title("Velocity Profile (Should be continuous)")
+ax2.set_title("Velocity Profile (Spline-based)")
 ax2.set_xlabel("Time (s)")
 ax2.set_ylabel("Speed (m/s)")
 ax2.legend()
