@@ -3,11 +3,10 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
-from rucking import Rucking, InputParameter, OutputParameter, Result
 
 # --- CONFIGURATION ---
 IMAGE_PATH = "image/FIBO.png" # เปลี่ยน path รูปของคุณ
-OUTPUT_CSV = "To_matlab.csv"
+OUTPUT_CSV = "UR5_Trajectory_TimeSampled.csv"
 
 # Workspace & Robot Settings
 CANVAS_WIDTH_M = 0.2        # ความกว้างจริงของรูปที่จะวาด (เมตร) e.g., 20cm
@@ -22,14 +21,6 @@ SPEED_DRAW = 0.05           # (m/s) ความเร็วตอนวาด�
 
 OFFSET_X = 0.2              #(m) เลื่อนจากจุด 0 เท่าไร
 OFFSET_Y = 0.2              #(m) เลื่อนจากจุด 0 เท่าไร
-
-# Ruckig Limits (กำหนดความเร็ว/เร่ง/กระชาก สูงสุดที่นี่)
-# หน่วย: m/s, m/s^2, m/s^3
-MAX_VEL = [0.25, 0.25, 0.25]  # [x, y, z]
-MAX_ACC = [0.5, 0.5, 0.5]     # เร่งได้เร็ว
-MAX_JERK = [3.0, 3.0, 3.0]    # ค่า Jerk สูง = ตอบสนองไว, ต่ำ = นุ่มนวลมาก
-
-CONTROL_CYCLE = 0.008 # 8ms for UR5
 
 # --- HELPER FUNCTIONS ---
 
@@ -77,11 +68,9 @@ def process_image(path, target_width):
     
     # Preprocessing
     blur = cv2.GaussianBlur(resized, (5,5), 0)
-    bilateral = cv2.bilateralFilter(blur,15,75,75)
-    edges = cv2.Canny(bilateral, 50, 150)
-    # ใช้ RETR_EXTERNAL เพื่อลดความซับซ้อน (เอาแค่เส้นนอก)
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    return contours, new_h, w
+    edges = cv2.Canny(blur, 50, 150)
+    return edges, new_h, target_width
+
 # --- MAIN PIPELINE ---
 
 # 1. Image Processing
@@ -89,142 +78,19 @@ edges, img_h, img_w = process_image(IMAGE_PATH, IMG_PROCESS_WIDTH)
 contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE) # ใช้ EXTERNAL เพื่อเอาแค่เส้นนอก หรือ LIST เอาหมด
 
 # 2. Prepare Scaling
-contours, img_h, img_w = process_image(IMAGE_PATH, IMG_PROCESS_WIDTH)
 scale_factor = CANVAS_WIDTH_M / img_w
 # ตั้งจุด Origin (0,0) ของหุ่นยนต์ให้เริ่มที่มุมซ้ายล่างของรูป หรือตรงกลางตามต้องการ
-offset_x = (-CANVAS_WIDTH_M) / 2 + OFFSET_X
-offset_y = ((img_h * scale_factor) / 2) + OFFSET_Y
+offset_x = (-CANVAS_WIDTH_M / 2 ) + OFFSET_X
+offset_y = ((img_h * scale_factor) / 2 ) + OFFSET_Y
+
 print(f"Detected {len(contours)} contours.")
 
-# --- 3. BUILD KEY WAYPOINTS (สร้างจุดเช็คพอยท์หลัก) ---
-# เราจะไม่ interpolate เอง แต่จะเก็บแค่จุดสำคัญ แล้วให้ Ruckig เชื่อมให้
-waypoints_queue = []
-# 3.0 Start at Home
-waypoints_queue.append({'pos': [offset_x, offset_y, Z_SAFE], 'type': 'HOME'})
+# 3. Trajectory Generation Loop
+full_trajectory_points = []
+current_pos = np.array([offset_x, offset_y, Z_SAFE]) # เริ่มที่ Home
 
-for cnt in contours:
-    if len(cnt) < 15: continue # กรอง Noise
-    
-    points = cnt.reshape(-1, 2)
-    
-    # แปลงพิกัดทั้งหมดใน contour นี้เตรียมไว้
-    real_points = []
-    for p in points:
-        px = (p[0] * scale_factor) + offset_x
-        py = offset_y - (p[1] * scale_factor)
-        real_points.append([px, py])
-    
-    # 3.1 TRAVEL: ยกปากกาไปหาจุดเริ่ม (Z_SAFE)
-    start_x, start_y = real_points[0]
-    waypoints_queue.append({'pos': [start_x, start_y, Z_SAFE], 'type': 'TRAVEL'})
-    
-    # 3.2 PEN DOWN: กดปากกาลง (Z_DRAW)
-    waypoints_queue.append({'pos': [start_x, start_y, Z_DRAW], 'type': 'DOWN'})
-    
-    # 3.3 DRAWING: ลากเส้นตามจุดต่างๆ
-    # เทคนิค: ถ้าจุดถี่มาก เราใส่ทุกจุดเลยก็ได้ Ruckig จะพยายามวิ่งผ่านให้
-    for i in range(1, len(real_points)):
-        rx, ry = real_points[i]
-        waypoints_queue.append({'pos': [rx, ry, Z_DRAW], 'type': 'DRAW'})
-        
-    # 3.4 PEN UP: ยกปากกาขึ้นที่จุดสุดท้าย
-    last_x, last_y = real_points[-1]
-    waypoints_queue.append({'pos': [last_x, last_y, Z_SAFE], 'type': 'UP'})
 
-# --- 4. RUCKIG TRAJECTORY GENERATION (The Core) ---
-
-# Initialize Ruckig
-otg = Ruckig(3, CONTROL_CYCLE) # 3 DOFs
-inp = InputParameter(3)
-out = OutputParameter(3)
-
-# Config Limits
-inp.max_velocity = MAX_VEL
-inp.max_acceleration = MAX_ACC
-inp.max_jerk = MAX_JERK
-
-# Initial State
-inp.current_position = [0.0, 0.0, Z_SAFE]
-inp.current_velocity = [0.0, 0.0, 0.0]
-inp.current_acceleration = [0.0, 0.0, 0.0]
-
-full_trajectory_data = [] # เก็บผลลัพธ์ละเอียด (t, x, y, z, v, a)
-total_time = 0.0
-
-print(f"Generating smooth trajectory from {len(waypoints_queue)} key waypoints...")
-
-for wp_idx, wp in enumerate(waypoints_queue):
-    # กำหนดเป้าหมายใหม่
-    inp.target_position = wp['pos']
-    
-    # Note: เราตั้ง Target Vel/Acc เป็น 0 เพื่อให้มั่นใจว่าหยุดนิ่งได้ถ้าจำเป็น (Robust)
-    # แต่เนื่องจากจุด Drawing มันใกล้กันมาก Ruckig จะไม่เบรกจนหยุดสนิทจริงๆ แต่มันจะคำนวณ Motion ที่เหมาะสมให้
-    inp.target_velocity = [0.0, 0.0, 0.0] 
-    inp.target_acceleration = [0.0, 0.0, 0.0]
-    
-    # Loop จนกว่าจะถึงจุดเป้าหมาย (Waypoint นี้)
-    while True:
-        # คำนวณ Next Step
-        result = otg.update(inp, out)
-        
-        # บันทึกข้อมูล
-        full_trajectory_data.append([
-            total_time,
-            out.new_position[0], out.new_position[1], out.new_position[2],     # Pos
-            out.new_velocity[0], out.new_velocity[1], out.new_velocity[2],     # Vel
-            out.new_acceleration[0], out.new_acceleration[1], out.new_acceleration[2], # Acc
-            wp['type'] # เก็บ Tag ไว้ดูว่าช่วงนี้ทำอะไร
-        ])
-        
-        # อัพเดทค่า Input สำหรับรอบถัดไป
-        out.pass_to_input(inp)
-        total_time += CONTROL_CYCLE
-        
-        # เช็คว่าจบ Segment นี้หรือยัง
-        if result == Result.Finished:
-            break
-
-# --- 5. CREATE DATAFRAME & VISUALIZE ---
-columns = ['t', 'x', 'y', 'z', 'vx', 'vy', 'vz', 'ax', 'ay', 'az', 'type']
-df_final = pd.DataFrame(full_trajectory_data, columns=columns)
-
-print(f"Generation Complete!")
-print(f"Total Time: {total_time:.2f} s")
-print(f"Total Points: {len(df_final)}")
-print(df_final.head())
-
-# Save to CSV
-df_final.to_csv(OUTPUT_CSV, index=False)
-print(f"Saved to {OUTPUT_CSV}")
-
-# Plot 3D
-fig = plt.figure(figsize=(10, 8))
-ax = fig.add_subplot(111, projection='3d')
-
-# Plot โดยใช้สีตามความเร็วแกน Z (สีแดง=กำลังยก/ลง, สีน้ำเงิน=นิ่ง/วาด)
-sc = ax.scatter(df_final['x'][::10], df_final['y'][::10], df_final['z'][::10], 
-                c=df_final['vz'][::10], cmap='coolwarm', s=1)
-ax.set_title("Ruckig Generated Trajectory (Jerk Limited)")
-ax.set_xlabel("X (m)")
-ax.set_ylabel("Y (m)")
-ax.set_zlabel("Z (m)")
-
-# Plot Velocity Profile (2D) เพื่อดูความสมูท
-plt.figure(figsize=(10,5))
-plt.plot(df_final['t'], df_final['vx'], label='Vx')
-plt.plot(df_final['t'], df_final['vy'], label='Vy')
-plt.plot(df_final['t'], df_final['vz'], label='Vz')
-plt.title("Velocity Profile (Check Smoothness)")
-plt.xlabel("Time (s)")
-plt.ylabel("Velocity (m/s)")
-plt.legend()
-plt.grid(True)
-
-plt.show()
-
-# full_trajectory_points = []
-# current_pos = np.array([offset_x, offset_y, Z_SAFE]) # เริ่มที่ Home
-# ใส่จุด Home ลงไปก่อน
+# จุด Home ลงไปก่อน
 # full_trajectory_points.append(current_pos)
 
 # for i, cnt in enumerate(contours):
@@ -270,30 +136,39 @@ plt.show()
 #     full_trajectory_points.append(segment)
 #     current_pos = up_pos
 
-
-
-# รวม List ทั้งหมดเป็น Array ใหญ่ (N, 3)
-# vstack จะรวม array ย่อยๆ ต่อกัน
-# all_points = np.vstack(full_trajectory_points)
+# # รวม List ทั้งหมดเป็น Array ใหญ่ (N, 3)
+# # vstack จะรวม array ย่อยๆ ต่อกัน
+all_points = np.vstack(full_trajectory_points)
 
 # # --- 4. Calculate Kinematics (v, a) ---
 # # สร้าง DataFrame
-# df_point = pd.DataFrame(all_points, columns=['x', 'y', 'z'])
+df = pd.DataFrame(all_points, columns=['x', 'y', 'z'])
 
+# # สร้าง Time Column
+# df['t'] = np.arange(len(df)) * SAMPLING_TIME
 
+# # คำนวณ Velocity (Diff)
+# # v = (x[i] - x[i-1]) / dt
+# # ใช้ np.gradient จะได้ค่าที่สมูทกว่า diff ธรรมดา (Central Difference)
+# df['vx'] = np.gradient(df['x'], SAMPLING_TIME)
+# df['vy'] = np.gradient(df['y'], SAMPLING_TIME)
+# df['vz'] = np.gradient(df['z'], SAMPLING_TIME)
+
+# # คำนวณ Acceleration
+# # a = (v[i] - v[i-1]) / dt
+# df['ax'] = np.gradient(df['vx'], SAMPLING_TIME)
+# df['ay'] = np.gradient(df['vy'], SAMPLING_TIME)
+# df['az'] = np.gradient(df['vz'], SAMPLING_TIME)
 
 # # Filter: ลบจุดแรกๆ ที่อาจจะมีค่ากระโดดจากการคำนวณ Gradient
-# df = df_point.iloc[1:].reset_index(drop=True)
+# df = df.iloc[1:].reset_index(drop=True)
 
-# print(f"Generated {len(df)} waypoints with {SAMPLING_TIME}s sampling time.")
-# print(df[['x', 'y', 'z']].head())
+print(f"Generated {len(df)} waypoints with {SAMPLING_TIME}s sampling time.")
+print(df[['t', 'x', 'y', 'z', 'vx', 'vz']].head())
 
 # # Save CSV
-# df.to_csv(OUTPUT_CSV, index=False)
-# print(f"Saved to {OUTPUT_CSV}")
-
-# all_points.to_csv("all_point", index=False)
-# print(f"Saved to all point")
+df.to_csv(OUTPUT_CSV, index=False)
+print(f"Saved to {OUTPUT_CSV}")
 
 # # --- 5. Visualization 3D ---
 # fig = plt.figure(figsize=(10, 8))
