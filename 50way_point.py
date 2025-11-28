@@ -9,8 +9,8 @@ IMAGE_PATH = "image/FIBO.png"
 OUTPUT_WAYPOINTS_CSV = "Waypoints_For_Ruckig.csv" # ชื่อไฟล์สำหรับเอาไปใส่ Ruckig
 
 # Workspace & Robot Settings
-CANVAS_WIDTH_M = 0.2        
-IMG_PROCESS_WIDTH = 500     
+CANVAS_WIDTH_M = 0.5        
+IMG_PROCESS_WIDTH = 400     
 Z_SAFE = 0.05               
 Z_DRAW = 0.00               
 
