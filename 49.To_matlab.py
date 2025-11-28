@@ -89,107 +89,102 @@ print(f"Detected {len(contours)} contours.")
 full_trajectory_points = []
 current_pos = np.array([offset_x, offset_y, Z_SAFE]) # เริ่มที่ Home
 
+full_trajectory_points.append(current_pos.reshape(1, 3))
 
-# จุด Home ลงไปก่อน
-# full_trajectory_points.append(current_pos)
+for i, cnt in enumerate(contours):
+    # กรองเส้นที่สั้นเกินไป (Noise)
+    if len(cnt) < 15: continue
+    
+    points = cnt.reshape(-1, 2)
+    
+    # --- คำนวณจุดเริ่มต้นของเส้นในหน่วยเมตร ---
+    start_pixel = points[0]
+    # แปลง pixel เป็นเมตร และบวก offset
+    target_x = (start_pixel[0] * scale_factor) + offset_x
+    # หมายเหตุ: แกน Y ของภาพมักจะกลับด้านกับแกน Y ของหุ่นยนต์ (ภาพ: ลงคือบวก, หุ่นยนต์: ขึ้นคือบวก)
+    # จึงใช้การลบจาก offset_y เพื่อกลับด้าน
+    target_y = offset_y - (start_pixel[1] * scale_factor) 
+    
+    # --- A. TRAVEL MOVE (เคลื่อนที่ในอากาศ) ---
+    # จากจุดปัจจุบัน -> ไปยังจุดเหนือจุดเริ่มต้นวาด (ที่ความสูง Z_SAFE)
+    target_pos_air = np.array([target_x, target_y, Z_SAFE])
+    # segment_a = generate_segment(current_pos, target_pos_air, SPEED_TRAVEL, SAMPLING_TIME)
+    # full_trajectory_points.append(segment_a)
+    full_trajectory_points.append(current_pos)
+    full_trajectory_points.append(target_pos_air)
+    current_pos = target_pos_air # อัปเดตตำแหน่งปัจจุบัน
+    
+    # --- B. PEN DOWN (กดปากกาลง) ---
+    # จาก Z_SAFE -> ลงไปที่ Z_DRAW (ที่ตำแหน่ง X,Y เดิม)
+    target_pos_down = np.array([target_x, target_y, Z_DRAW])
+    segment_b = generate_segment(current_pos, target_pos_down, SPEED_TRAVEL, SAMPLING_TIME)
+    full_trajectory_points.append(segment_b)
+    current_pos = target_pos_down
 
-# for i, cnt in enumerate(contours):
-#     # กรอง Noise เล็กๆ
-#     if len(cnt) < 15: continue
-    
-#     points = cnt.reshape(-1, 2)
-    
-#     # --- A. TRAVEL MOVE (Air) ---
-#     # จากจุดปัจจุบัน -> ไปจุดเริ่มของเส้น (ที่ความสูง Safe)
-#     start_pixel = points[0]
-#     target_x = (start_pixel[0] * scale_factor) + offset_x
-#     target_y = offset_y - (start_pixel[1] * scale_factor) # กลับแกน Y
-#     target_pos = np.array([target_x, target_y, Z_SAFE])
-    
-#     # สร้างจุดย่อย
-#     segment = generate_segment(current_pos, target_pos, SPEED_TRAVEL, SAMPLING_TIME)
-#     full_trajectory_points.append(segment)
-#     current_pos = target_pos # อัพเดทตำแหน่งล่าสุด
-    
-#     # --- B. PEN DOWN (Z-Axis Move) ---
-#     # จาก Safe -> Draw (ที่ตำแหน่ง X,Y เดิม)
-#     down_pos = np.array([target_x, target_y, Z_DRAW])
-#     segment = generate_segment(current_pos, down_pos, SPEED_TRAVEL * 0.5, SAMPLING_TIME) # ลงช้าๆหน่อย
-#     full_trajectory_points.append(segment)
-#     current_pos = down_pos
-
-#     # --- C. DRAWING MOVE (Surface) ---
-#     # วนลูปจุดทั้งหมดในเส้นนั้น
-#     for p in points[1:]: # เริ่มจุดที่ 2
-#         px = (p[0] * scale_factor) + offset_x
-#         py = offset_y - (p[1] * scale_factor)
-#         draw_pos = np.array([px, py, Z_DRAW])
+    # --- C. DRAWING MOVE (ลากเส้นบนพื้นผิว) ---
+    # วนลูปจุดที่เหลือในเส้นนั้น (เริ่มจากจุดที่ 1 เพราะจุดที่ 0 คือจุดที่กดปากกาลงไปแล้ว)
+    for p in points[1:]: 
+        px = (p[0] * scale_factor) + offset_x
+        py = offset_y - (p[1] * scale_factor) # กลับด้านแกน Y เช่นกัน
+        draw_pos = np.array([px, py, Z_DRAW])
         
-#         segment = generate_segment(current_pos, draw_pos, SPEED_DRAW, SAMPLING_TIME)
-#         full_trajectory_points.append(segment)
-#         current_pos = draw_pos
+        # สร้าง segment ระหว่างจุดต่อจุดใน contour
+        segment_c = generate_segment(current_pos, draw_pos, SPEED_DRAW, SAMPLING_TIME)
+        full_trajectory_points.append(segment_c)
+        current_pos = draw_pos # อัปเดตตำแหน่งปัจจุบันไปเรื่อยๆ ตามเส้น
         
-#     # --- D. PEN UP (Z-Axis Move) ---
-#     # จาก Draw -> Safe
-#     up_pos = np.array([current_pos[0], current_pos[1], Z_SAFE])
-#     segment = generate_segment(current_pos, up_pos, SPEED_TRAVEL * 0.5, SAMPLING_TIME)
-#     full_trajectory_points.append(segment)
-#     current_pos = up_pos
+    # --- D. PEN UP (ยกปากกาขึ้นเมื่อจบเส้น) ---
+    # จาก Z_DRAW -> ขึ้นไปที่ Z_SAFE (ที่ตำแหน่ง X,Y สุดท้ายของเส้น)
+    target_pos_up = np.array([current_pos[0], current_pos[1], Z_SAFE])
+    segment_d = generate_segment(current_pos, target_pos_up, SPEED_TRAVEL, SAMPLING_TIME)
+    full_trajectory_points.append(segment_d)
+    current_pos = target_pos_up
 
-# # รวม List ทั้งหมดเป็น Array ใหญ่ (N, 3)
-# # vstack จะรวม array ย่อยๆ ต่อกัน
+# --- 4. รวมข้อมูลและบันทึก CSV ---
+# รวม List ของ array ย่อยๆ ให้เป็น Matrix ใหญ่ (N, 3)
 all_points = np.vstack(full_trajectory_points)
 
-# # --- 4. Calculate Kinematics (v, a) ---
-# # สร้าง DataFrame
+# สร้าง DataFrame
 df = pd.DataFrame(all_points, columns=['x', 'y', 'z'])
+# เพิ่มคอลัมน์เวลา (t) เพื่อใช้อ้างอิง
+df['t'] = np.arange(len(df)) * SAMPLING_TIME
 
-# # สร้าง Time Column
-# df['t'] = np.arange(len(df)) * SAMPLING_TIME
-
-# # คำนวณ Velocity (Diff)
-# # v = (x[i] - x[i-1]) / dt
-# # ใช้ np.gradient จะได้ค่าที่สมูทกว่า diff ธรรมดา (Central Difference)
-# df['vx'] = np.gradient(df['x'], SAMPLING_TIME)
-# df['vy'] = np.gradient(df['y'], SAMPLING_TIME)
-# df['vz'] = np.gradient(df['z'], SAMPLING_TIME)
-
-# # คำนวณ Acceleration
-# # a = (v[i] - v[i-1]) / dt
-# df['ax'] = np.gradient(df['vx'], SAMPLING_TIME)
-# df['ay'] = np.gradient(df['vy'], SAMPLING_TIME)
-# df['az'] = np.gradient(df['vz'], SAMPLING_TIME)
-
-# # Filter: ลบจุดแรกๆ ที่อาจจะมีค่ากระโดดจากการคำนวณ Gradient
-# df = df.iloc[1:].reset_index(drop=True)
-
-print(f"Generated {len(df)} waypoints with {SAMPLING_TIME}s sampling time.")
-print(df[['t', 'x', 'y', 'z', 'vx', 'vz']].head())
-
-# # Save CSV
+print(f"Generated {len(df)} trajectory points.")
+# บันทึกลง CSV (เผื่อนำไปใช้ต่อ)
 df.to_csv(OUTPUT_CSV, index=False)
-print(f"Saved to {OUTPUT_CSV}")
+print(f"Saved trajectory to {OUTPUT_CSV}")
 
-# # --- 5. Visualization 3D ---
-# fig = plt.figure(figsize=(10, 8))
-# ax = fig.add_subplot(111, projection='3d')
+# --- 5. Visualization 3D ---
+fig = plt.figure(figsize=(10, 8))
+ax = fig.add_subplot(111, projection='3d')
 
-# # เพื่อความเร็วในการพลอต เราจะสุ่มพลอตแค่บางจุด (เช่น ทุกๆ 10 จุด) ถ้าข้อมูลเยอะ
-# skip = 5
-# ax.scatter(df['x'][::skip], df['y'][::skip], df['z'][::skip], c=df['z'][::skip], cmap='coolwarm', s=1)
+# พลอตจุดทั้งหมด
+# ใช้เทคนิคการใส่สี (cmap) ตามความสูง (Z)
+# สีโทนแดง = อยู่สูง (Travel), สีโทนน้ำเงิน = อยู่ต่ำ (Drawing)
+sc = ax.scatter(df['x'], df['y'], df['z'], c=df['z'], cmap='coolwarm_r', s=1, label='Trajectory Points')
 
-# ax.set_title(f"Trajectory Simulation (Sampled every {SAMPLING_TIME}s)")
-# ax.set_xlabel("X (m)")
-# ax.set_ylabel("Y (m)")
-# ax.set_zlabel("Z (m)")
+# ตกแต่งกราฟ
+ax.set_title(f"Generated Robot Trajectory (dt={SAMPLING_TIME}s)")
+ax.set_xlabel("X (meters)")
+ax.set_ylabel("Y (meters)")
+ax.set_zlabel("Z (meters)")
 
-# # Scale adjustment
-# max_range = np.array([df['x'].max()-df['x'].min(), df['y'].max()-df['y'].min(), df['z'].max()-df['z'].min()]).max() / 2.0
-# mid_x = (df['x'].max()+df['x'].min()) * 0.5
-# mid_y = (df['y'].max()+df['y'].min()) * 0.5
-# mid_z = (df['z'].max()+df['z'].min()) * 0.5
-# ax.set_xlim(mid_x - max_range, mid_x + max_range)
-# ax.set_ylim(mid_y - max_range, mid_y + max_range)
-# ax.set_zlim(mid_z - max_range, mid_z + max_range)
+# เพิ่ม Colorbar เพื่อบอกระดับความสูง
+cbar = plt.colorbar(sc, ax=ax, shrink=0.5, aspect=10)
+cbar.set_label('Z Height (m)')
 
-# plt.show()
+# ตั้งค่าให้สเกลแกน X และ Y เท่ากัน เพื่อให้รูปไม่เบี้ยว
+# หาจุดกึ่งกลางและระยะที่ไกลที่สุดเพื่อสร้าง bounding box
+mid_x = (df['x'].max() + df['x'].min()) * 0.5
+mid_y = (df['y'].max() + df['y'].min()) * 0.5
+max_range = np.array([df['x'].max()-df['x'].min(), df['y'].max()-df['y'].min()]).max() / 2.0
+
+ax.set_xlim(mid_x - max_range, mid_x + max_range)
+ax.set_ylim(mid_y - max_range, mid_y + max_range)
+# แกน Z fix ไว้ให้เห็นชัดๆ
+ax.set_zlim(Z_DRAW - 0.01, Z_SAFE + 0.02)
+
+# ปรับมุมมองเริ่มต้น (optional)
+ax.view_init(elev=30, azim=-60)
+
+plt.show()
