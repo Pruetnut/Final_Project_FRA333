@@ -59,7 +59,7 @@ for i, cnt in enumerate(contours):
     plt.plot(x[0], y[0], 'ro') # จุดสีแดงคือจุดเริ่ม
 plt.gca().invert_yaxis() 
 plt.axis('equal') 
-plt.show()
+# plt.show()
 
 for contour in contours:
     # contour รูปร่างเป็น [[x1, y1], [x2, y2], ...] 

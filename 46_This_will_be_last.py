@@ -10,7 +10,8 @@ from scipy.interpolate import splprep, splev
 
 DRAW_MODE = 'FLOOR'      # 'WALL' or 'FLOOR'
 IMAGE_PATH = "image/FIBO.png"
-OUTPUT_CSV = f"5ur5_Trajectory{DRAW_MODE.lower()}.csv"
+# OUTPUT_CSV = f"5ur5_Trajectory{DRAW_MODE.lower()}.csv"
+OUTPUT_CSV = f"02To_worspace.csv"
 
 # Workspace
 CANVAS_WIDTH_M = 0.9     # drawing width in meters
@@ -247,40 +248,25 @@ ax = np.gradient(vx, dt)
 ay = np.gradient(vy, dt)
 az = np.gradient(vz, dt)
 
-# 4) ตรวจหา spike ใน velocity (threshold ตาม delta หรือ max accel)
-v_norm = np.sqrt(vx**2 + vy**2 + vz**2)
-# ตัวอย่าง: ถ้าขึ้น/ลงเกิน 3x median diff => replace โดย linear interp
-dv = np.abs(np.diff(v_norm, prepend=v_norm[0]))
-thr = np.median(dv) * 8.0
-spike_idx = np.where(dv > thr)[0]
-# แก้: แทนค่าด้วย interpolation ของเพื่อนบ้าน
-for i in spike_idx:
-    left = max(0, i-3); right = min(len(v_norm)-1, i+3)
-    v_norm[i] = np.median(v_norm[left:right+1])
-# (ถ้าต้องแก้ vx,vy,vz ให้ทำแยกแกนด้วยวิธีคล้ายกัน)
 
-# 5) สร้าง DataFrame ใหม่
-df_fixed = pd.DataFrame({
-    't': t_new, 'x': x_s, 'y': y_s, 'z': z_s,
-    'vx': vx, 'vy': vy, 'vz': vz,
-    'ax': ax, 'ay': ay, 'az': az,
-})
 
-df_fixed.to_csv(OUTPUT_CSV, index=False, float_format='%.6f')
+df.to_csv(OUTPUT_CSV, index=False, float_format='%.6f')
 print(f"✅ Saved: {OUTPUT_CSV}")
 
 # Plot for validation
 plt.figure(figsize=(10,8))
-v_mag = np.sqrt(df_fixed['vx']**2 + df_fixed['vy']**2 + df_fixed['vz']**2)
+v_mag = np.sqrt(df['vx']**2 + df['vy']**2 + df['vz']**2)
+v_mag = np.sqrt(df['vx']**2 + df['vy']**2 + df['vz']**2)
+
 plt.subplot(2,1,1)
-plt.plot(df_fixed['t'], v_mag)
+plt.plot(df['t'], v_mag)
 plt.title("Velocity Profile")
 plt.xlabel("Time (s)")
 plt.ylabel("Speed (m/s)")
 plt.grid(True)
 
 ax = plt.subplot(2,1,2, projection='3d')
-ax.plot(df_fixed['x'], df_fixed['y'], df_fixed['z'], linewidth=0.5)
+ax.plot(df['x'], df['y'], df['z'], linewidth=0.5)
 ax.set_title("Trajectory")
 plt.tight_layout()
 plt.show()
