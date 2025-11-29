@@ -8,7 +8,7 @@ import os
 
 # --- 1. CONFIGURATION ---
 INPUT_CSV = "Waypoints_For_Ruckig.csv"
-OUTPUT_CSV = "Final_Trajectory_ViaPoints.csv"
+OUTPUT_CSV = "Go_to_sleep.csv"
 
 # Robot Settings
 CONTROL_CYCLE = 0.008

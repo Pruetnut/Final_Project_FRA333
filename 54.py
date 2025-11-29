@@ -7,7 +7,7 @@ import os
 
 # --- 1. CONFIGURATION ---
 INPUT_CSV = "Waypoints_For_Ruckig.csv"
-OUTPUT_CSV = "Final_Trajectory_With_Stops.csv"
+OUTPUT_CSV = "Go_to_sleep.csv"
 
 # Robot Settings
 DT = 0.008  # Sampling time
@@ -15,7 +15,7 @@ DT = 0.008  # Sampling time
 # Limits
 SPEED_TRAVEL = 0.25 # m/s (วิ่งเร็วตอนยกปากกา)
 SPEED_DRAW   = 0.05 # m/s (วาดช้าๆ)
-ACCEL_TIME   = 0.05 # เวลาเร่งความเร็ว
+ACCEL_TIME   = 0.1 # เวลาเร่งความเร็ว
 
 # --- 2. LOAD DATA ---
 if not os.path.exists(INPUT_CSV):
