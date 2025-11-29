@@ -132,8 +132,8 @@ def full_waypoints(xy_coords, Z_DRAW, Z_SAFE, HOME_POS_X, HOME_POS_Y):
     # 1. จุดเริ่มต้น (0.25,0.25,0.25) จุด home สร้างที่เริ่มจุดเดี่ยวจุดอรกใน dataframe
     # เราใช้ HOME_POS ที่กำหนดไว้
     final_waypoints.append({
-        'x': HOME_POINT[0], 'y': HOME_POINT[1], 'z': HOME_POINT[2], 
-        'path_id': -1, 'type': 0, 'cmd': 'HOME_START'
+        'x': HOME_POINT[0], 'y': HOME_POINT[1], 'z': HOME_POINT[2], 'type': 0, 'cmd': 'HOME_START', 
+        'path_id': -1
     })
     
     # --- LOOP ผ่านแต่ละ Path ID ---
@@ -154,8 +154,8 @@ def full_waypoints(xy_coords, Z_DRAW, Z_SAFE, HOME_POS_X, HOME_POS_Y):
         # 2. เพิ่มจุดแรก(x y คือจุดเเรกใน path นั้น) ปากกายกอยู่แล้ว z = Z_SAFE 
         # (Travel Approach - บินมาเหนือจุดเริ่ม)
         final_waypoints.append({
-            'x': P1_xy[0], 'y': P1_xy[1], 'z': Z_SAFE, 
-            'path_id': path_id, 'type': 0, 'cmd': 'TRAVEL_APPROACH'
+            'x': P1_xy[0], 'y': P1_xy[1], 'z': Z_SAFE, 'type': 0, 'cmd': 'TRAVEL_APPROACH', 
+            'path_id': path_id
         })
 
         # 3. วงปากกาลงที่จุดแรก z = Z_DRAW (Pen Down)
@@ -169,8 +169,8 @@ def full_waypoints(xy_coords, Z_DRAW, Z_SAFE, HOME_POS_X, HOME_POS_Y):
         # นำจุดทั้งหมดของ Path นั้นมาสร้าง Waypoints
         for x, y in coords:
             final_waypoints.append({
-                'x': x, 'y': y, 'z': Z_DRAW, 
-                'path_id': path_id, 'type': 1, 'cmd': 'DRAW_SEGMENT'
+                'x': x, 'y': y, 'z': Z_DRAW, 'type': 1, 'cmd': 'DRAW_SEGMENT', 
+                'path_id': path_id
             })
             
         # --- INJECT LIFT POINT (Type 0) ---
@@ -182,22 +182,21 @@ def full_waypoints(xy_coords, Z_DRAW, Z_SAFE, HOME_POS_X, HOME_POS_Y):
 
         # 5. ยกปากกาที่จุดสุดท้าย ( xy อยู่ที่จุดสุดท้าย) z = Z_SAFE
         final_waypoints.append({
-            'x': PN_xy[0], 'y': PN_xy[1], 'z': Z_SAFE, 
-            'path_id': path_id, 'type': 0, 'cmd': 'LIFT_PEN'
+            'x': PN_xy[0], 'y': PN_xy[1], 'z': Z_SAFE, 'type': 0, 'cmd': 'LIFT_PEN', 'path_id': path_id
         })
         
     # --- GLOBAL END (จุดที่ 6) ---
     # 6. จุดสุดท้ายของ dataframe เป็นจุดเดี่ยวกับจุด Home
     final_waypoints.append({
-        'x': HOME_POINT[0], 'y': HOME_POINT[1], 'z': HOME_POINT[2], 
-        'path_id': -1, 'type': 0, 'cmd': 'HOME_END'
+        'x': HOME_POINT[0], 'y': HOME_POINT[1], 'z': HOME_POINT[2], 'type': 0, 'cmd': 'HOME_END', 
+        'path_id': -1
     })
     
     # คืนค่าเป็น DataFrame
     return pd.DataFrame(final_waypoints)
 
 waypoint_xyz = full_waypoints(df_robot_coords, Z_DRAW, Z_SAFE, HOME_POS_X, HOME_POS_Y)
-# waypoint_xyz.to_csv("df_xyzwaypoint_FIBO.csv", index=False)
+waypoint_xyz.to_csv("df_xyzwaypoint_FIBO_nostop.csv", index=False)
 print(f"Detected {len(waypoint_xyz)} waypoint.")
 
 # --- LOAD DATA ---

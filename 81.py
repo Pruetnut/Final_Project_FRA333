@@ -6,7 +6,7 @@ from scipy.interpolate import CubicSpline
 import os
 
 # --- CONFIGURATION ---
-INPUT_CSV = "Waypoints_For_Ruckig.csv"
+INPUT_CSV = "df_xyzwaypoint_FIBO_nostop.csv"
 OUTPUT_CSV = "Final_Trajectory_Arch_Full2.csv"
 
 DT = 0.008 
