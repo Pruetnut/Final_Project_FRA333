@@ -10,23 +10,23 @@ from skimage.morphology import skeletonize
 IMAGE_PATH = "image/FIBO.png"
 OUTPUT_WAYPOINTS_CSV = "Waypoints_with_z.csv"
 
+
+#Image size &
+IMG_PROCESS_WIDTH = 500     #px
+SKIP_PIXEL_STEP = 1         #px reduce pixels
+IMG_PROCESS_HEIGHT = 400 # สมมติว่าความสูง 400
+
 # --- Robot Workspace Settings ---
 CENTER_X = 0.5              #m
 CENTER_Y = 0.0              #m
 DRAWING_WIDTH_M = 0.6       #m
 
+HOME_POS_X = 0.25            # ตำแหน่ง Home X
+HOME_POS_Y = 0.25            # ตำแหน่ง Home Y
 Z_DRAW = 0.00               #m
 Z_SAFE = 0.05               #m
 
-IMG_PROCESS_HEIGHT = 400 # สมมติว่าความสูง 400
 
-#Image size & 
-IMG_PROCESS_WIDTH = 500     #px
-MIN_PATH_PX = 10            #define new path
-JUMP_THRESHOLD_M = 0.05     # กระโดดเกิน 1.0 pixel ในแกน X และ Y ถือว่าขึ้นเส้นให
-SKIP_PIXEL_STEP = 1         #px reduce pixels
-
-# --- 2. HELPER FUNCTIONS ---
 def process_image(path, target_width):
     img = cv2.imread(path, 0)
     if img is None:
@@ -50,7 +50,7 @@ def process_image(path, target_width):
     
     return skeleton_uint8, new_h, target_width
 
-# --- 3. MAIN PIPELINE ---
+# --- SEE RESULT EDGE DETECTION ---
 edges, img_h, img_w = process_image(IMAGE_PATH, IMG_PROCESS_WIDTH)
 cv2.imwrite("img_edge_detection.png", edges)
 contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
@@ -100,6 +100,7 @@ def convert_contours_to_meter_coords(contours, IMG_PROCESS_WIDTH, IMG_PROCESS_HE
     # คืนค่าเป็น DataFrame
     return pd.DataFrame(all_waypoints)
 
+#--- df_robot_coords = (path_id, meter_x, meter_y)
 df_robot_coords = convert_contours_to_meter_coords(
     contours,
     IMG_PROCESS_WIDTH,
@@ -108,6 +109,130 @@ df_robot_coords = convert_contours_to_meter_coords(
     CENTER_X,
     CENTER_Y
 )
+#--- SAVE MATER CONTOURS XY ------------
+print(f"Detected {len(df_robot_coords)} contours.")
+# df_robot_coords.to_csv("df_contour_m_FIBO.csv", index=False)
 
 
-df_robot_coords.to_csv("df_contour_m_FIBO.csv", index=False)
+def full_waypoints(xy_coords, Z_DRAW, Z_SAFE, HOME_POS_X, HOME_POS_Y):
+    """
+    สร้าง Waypoints XYZ สมบูรณ์ โดยเพิ่มจุดยก/วางปากกา (Type 0) เข้าไป 
+    และกำหนดจุดเริ่มต้น/จุดสิ้นสุด (Home)
+    
+    Input: DataFrame ที่มี (path_id, meter_x, meter_y)
+    Output: List of Dictionaries [{'x':..., 'y':..., 'z':..., 'type':...}]
+    """
+    
+    # 1. กำหนด Global Home Point (จุดเดียวกับที่กำหนดไว้)
+    HOME_POINT = np.array([HOME_POS_X, HOME_POS_Y, Z_SAFE])
+    
+    final_waypoints = []
+    
+    # --- GLOBAL START (จุดที่ 1) ---
+    # 1. จุดเริ่มต้น (0.25,0.25,0.25) จุด home สร้างที่เริ่มจุดเดี่ยวจุดอรกใน dataframe
+    # เราใช้ HOME_POS ที่กำหนดไว้
+    final_waypoints.append({
+        'x': HOME_POINT[0], 'y': HOME_POINT[1], 'z': HOME_POINT[2], 
+        'path_id': -1, 'type': 0, 'cmd': 'HOME_START'
+    })
+    
+    # --- LOOP ผ่านแต่ละ Path ID ---
+    
+    for path_id, group in xy_coords.groupby('path_id'):
+        
+        # 2. เตรียมข้อมูล Path
+        coords = group[['meter_x', 'meter_y']].values
+        
+        # P1: จุดแรกของ Path
+        P1_xy = coords[0]
+        
+        # PN: จุดสุดท้ายของ Path
+        PN_xy = coords[-1]
+        
+        # --- INJECT TRANSITION POINTS (Type 0) ---
+
+        # 2. เพิ่มจุดแรก(x y คือจุดเเรกใน path นั้น) ปากกายกอยู่แล้ว z = Z_SAFE 
+        # (Travel Approach - บินมาเหนือจุดเริ่ม)
+        final_waypoints.append({
+            'x': P1_xy[0], 'y': P1_xy[1], 'z': Z_SAFE, 
+            'path_id': path_id, 'type': 0, 'cmd': 'TRAVEL_APPROACH'
+        })
+
+        # 3. วงปากกาลงที่จุดแรก z = Z_DRAW (Pen Down)
+        # final_waypoints.append({
+        #     'x': P1_xy[0], 'y': P1_xy[1], 'z': Z_DRAW, 
+        #     'path_id': path_id, 'type': 0, 'cmd': 'PEN_DOWN'
+        # })
+        
+        # --- DRAWING POINTS (Type 1) ---
+        # 4. (รวมถึงจุดสุดท้ายของ Path ที่ระดับ Z_DRAW)
+        # นำจุดทั้งหมดของ Path นั้นมาสร้าง Waypoints
+        for x, y in coords:
+            final_waypoints.append({
+                'x': x, 'y': y, 'z': Z_DRAW, 
+                'path_id': path_id, 'type': 1, 'cmd': 'DRAW_SEGMENT'
+            })
+            
+        # --- INJECT LIFT POINT (Type 0) ---
+        # # 5. เตรียมตัวหยุดก่อนยกปากกา
+        # final_waypoints.append({
+        #     'x': PN_xy[0], 'y': PN_xy[1], 'z': Z_DRAW, 
+        #     'path_id': path_id, 'type': 0, 'cmd': 'PEN_DOWN'
+        # })
+
+        # 5. ยกปากกาที่จุดสุดท้าย ( xy อยู่ที่จุดสุดท้าย) z = Z_SAFE
+        final_waypoints.append({
+            'x': PN_xy[0], 'y': PN_xy[1], 'z': Z_SAFE, 
+            'path_id': path_id, 'type': 0, 'cmd': 'LIFT_PEN'
+        })
+        
+    # --- GLOBAL END (จุดที่ 6) ---
+    # 6. จุดสุดท้ายของ dataframe เป็นจุดเดี่ยวกับจุด Home
+    final_waypoints.append({
+        'x': HOME_POINT[0], 'y': HOME_POINT[1], 'z': HOME_POINT[2], 
+        'path_id': -1, 'type': 0, 'cmd': 'HOME_END'
+    })
+    
+    # คืนค่าเป็น DataFrame
+    return pd.DataFrame(final_waypoints)
+
+waypoint_xyz = full_waypoints(df_robot_coords, Z_DRAW, Z_SAFE, HOME_POS_X, HOME_POS_Y)
+# waypoint_xyz.to_csv("df_xyzwaypoint_FIBO.csv", index=False)
+print(f"Detected {len(waypoint_xyz)} waypoint.")
+
+# --- LOAD DATA ---
+# (สมมติว่าโค้ดได้อ่านไฟล์ INPUT_CSV มาแล้ว หรือสร้าง Dummy Path หากไม่พบ)
+
+# [Code for loading/generating data as executed previously]
+df = waypoint_xyz
+# Prepare colors based on Type column
+# Type 0 (Travel/Lift) = Red, Type 1 (Draw) = Blue
+colors = np.where(df['type'] == 1, 'blue', 'red') 
+sizes = np.where(df['type'] == 1, 5, 20) 
+
+fig = plt.figure(figsize=(10, 8))
+ax = fig.add_subplot(111, projection='3d')
+
+# Scatter Plot for Points
+ax.scatter(df['x'], df['y'], df['z'], c=colors, s=sizes, alpha=0.7)
+
+# Plot connecting line (Sequence flow)
+ax.plot(df['x'], df['y'], df['z'], color='gray', linestyle=':', linewidth=0.5, alpha=0.5)
+
+
+# --- Aesthetics and Labels ---
+ax.set_title("3D Waypoint Path Visualization (Red=Travel, Blue=Draw)")
+ax.set_xlabel("X (Forward) [m]")
+ax.set_ylabel("Y (Side) [m]")
+ax.set_zlabel("Z (Height) [m]")
+
+# Ensure the Z-axis scale is compressed to match reality
+ax.set_zlim(Z_DRAW - 0.01, Z_SAFE + 0.01) 
+ax.set_box_aspect([1, 1, 0.2]) # Compress Z-axis for a table look
+
+# Add point markers for Home/Start/End
+ax.scatter(df['x'].iloc[0], df['y'].iloc[0], df['z'].iloc[0], color='green', s=100, marker='*', label='Start Home')
+ax.scatter(df['x'].iloc[-1], df['y'].iloc[-1], df['z'].iloc[-1], color='purple', s=100, marker='x', label='End Home')
+
+ax.legend()
+plt.show()
