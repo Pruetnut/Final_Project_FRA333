@@ -6,9 +6,9 @@ from mpl_toolkits.mplot3d import Axes3D
 from skimage.morphology import skeletonize
 
 # --- 1. CONFIGURATION ---
-# IMAGE_PATH = "image/Bird.jpg" 
-IMAGE_PATH = "image/FIBO.png"
-OUTPUT_WAYPOINTS_CSV = "Waypoints_with_z.csv"
+IMAGE_PATH = "image/Bird.jpg" 
+# IMAGE_PATH = "image/FIBO.png"
+OUTPUT_WAYPOINTS_CSV = "Matlab/Waypoints_with_z4point.csv"
 
 
 #Image size &
@@ -133,7 +133,7 @@ def full_waypoints(xy_coords, Z_DRAW, Z_SAFE, HOME_POS_X, HOME_POS_Y):
     # เราใช้ HOME_POS ที่กำหนดไว้
     final_waypoints.append({
         'x': HOME_POINT[0], 'y': HOME_POINT[1], 'z': HOME_POINT[2], 'type': 0, 'cmd': 'HOME_START', 
-        'path_id': -1
+        'path_id': -1, 'count':0
     })
     
     # --- LOOP ผ่านแต่ละ Path ID ---
@@ -159,10 +159,10 @@ def full_waypoints(xy_coords, Z_DRAW, Z_SAFE, HOME_POS_X, HOME_POS_Y):
         })
 
         # 3. วงปากกาลงที่จุดแรก z = Z_DRAW (Pen Down)
-        # final_waypoints.append({
-        #     'x': P1_xy[0], 'y': P1_xy[1], 'z': Z_DRAW, 
-        #     'path_id': path_id, 'type': 0, 'cmd': 'PEN_DOWN'
-        # })
+        final_waypoints.append({
+            'x': P1_xy[0], 'y': P1_xy[1], 'z': Z_DRAW, 'type': 0, 'cmd': 'PEN_DOWN', 
+            'path_id': path_id
+        })
         
         # --- DRAWING POINTS (Type 1) ---
         # 4. (รวมถึงจุดสุดท้ายของ Path ที่ระดับ Z_DRAW)
@@ -175,10 +175,10 @@ def full_waypoints(xy_coords, Z_DRAW, Z_SAFE, HOME_POS_X, HOME_POS_Y):
             
         # --- INJECT LIFT POINT (Type 0) ---
         # # 5. เตรียมตัวหยุดก่อนยกปากกา
-        # final_waypoints.append({
-        #     'x': PN_xy[0], 'y': PN_xy[1], 'z': Z_DRAW, 
-        #     'path_id': path_id, 'type': 0, 'cmd': 'PEN_DOWN'
-        # })
+        final_waypoints.append({
+            'x': PN_xy[0], 'y': PN_xy[1], 'z': Z_DRAW, 'type': 0, 'cmd': 'PEN_DOWN', 
+            'path_id': path_id
+        })
 
         # 5. ยกปากกาที่จุดสุดท้าย ( xy อยู่ที่จุดสุดท้าย) z = Z_SAFE
         final_waypoints.append({
@@ -196,7 +196,7 @@ def full_waypoints(xy_coords, Z_DRAW, Z_SAFE, HOME_POS_X, HOME_POS_Y):
     return pd.DataFrame(final_waypoints)
 
 waypoint_xyz = full_waypoints(df_robot_coords, Z_DRAW, Z_SAFE, HOME_POS_X, HOME_POS_Y)
-waypoint_xyz.to_csv("df_xyzwaypoint_FIBO_nostop.csv", index=False)
+waypoint_xyz.to_csv(OUTPUT_WAYPOINTS_CSV, index=False)
 print(f"Detected {len(waypoint_xyz)} waypoint.")
 
 # --- LOAD DATA ---

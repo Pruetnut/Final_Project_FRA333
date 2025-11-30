@@ -150,6 +150,24 @@ print("1. Processing Image...")
 edges, img_h, img_w = process_image_to_edges(IMAGE_PATH, IMG_PROCESS_WIDTH)
 contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
 
+contoursXY = []
+seen_coords = set()
+for path_id, cnt in enumerate(contours):
+    points = cnt.reshape(-1, 2)
+    for px, py in points:
+        current_coord = (px, py)
+        if current_coord not in seen_coords:
+            seen_coords.add(current_coord)
+        contoursXY.append({
+            'x': px,
+            'y': py,
+            'z': 0,
+            'path': path_id
+        })
+df_contoursXY = pd.DataFrame(contoursXY)
+df_contoursXY.to_csv('Matlab/contoursxyform43.csv', index=False)
+print(f"บันทึกข้อมูล {len(df_contoursXY)} จุด (ตัดจุดซ้ำออกแล้ว)")
+
 # --- STEP 2: Scale to Wall Workspace ---
 print(f"2. Scaling and Creating Via Points (Dist X={WALL_DISTANCE_X}m)...")
 scale_factor = CANVAS_WIDTH_M / img_w
