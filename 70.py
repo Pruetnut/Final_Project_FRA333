@@ -9,12 +9,12 @@ from skimage import data
 
 # --- 1. CONFIGURATION ---
 IMAGE_PATH = "image/FIBO.png" 
-OUTPUT_WAYPOINTS_CSV = "Waypoints_For_Ruckig.csv"
+OUTPUT_WAYPOINTS_CSV = "Matlab/waypoint_form70.csv"
 
 # --- Robot Workspace ---
 CENTER_X = 0.5      # เมตร
 CENTER_Y = 0.0      # เมตร
-DRAWING_WIDTH_M = 0.5  # เมตร
+DRAWING_WIDTH_M = 0.6  # เมตร
 
 # Z Levels (Standard Z-Up)
 Z_DRAW = 0.00       # วาด (ต่ำ)
@@ -112,8 +112,8 @@ pixel_center_y = img_h / 2
 def to_robot(px, py):
     shifted_x = px - pixel_center_x
     shifted_y = py - pixel_center_y
-    rx = CENTER_X + (shifted_y * scale_factor) 
-    ry = CENTER_Y + (shifted_x * scale_factor) 
+    rx = CENTER_X - (shifted_y * scale_factor) 
+    ry = CENTER_Y - (shifted_x * scale_factor) 
     return rx, ry
 
 # C. Sorting Contours (Optimization)

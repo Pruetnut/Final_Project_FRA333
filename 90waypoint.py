@@ -6,8 +6,8 @@ from mpl_toolkits.mplot3d import Axes3D
 from skimage.morphology import skeletonize
 
 # --- 1. CONFIGURATION ---
-IMAGE_PATH = "image/Bird.jpg" 
-# IMAGE_PATH = "image/FIBO.png"
+# IMAGE_PATH = "image/Bird.jpg" 
+IMAGE_PATH = "image/FIBO.png"
 OUTPUT_WAYPOINTS_CSV = "Matlab/Waypoints_with_z4point.csv"
 
 
@@ -77,7 +77,7 @@ def convert_contours_to_meter_coords(contours, IMG_PROCESS_WIDTH, IMG_PROCESS_HE
     for path_id, cnt in enumerate(contours):
         # cnt เป็น NumPy array รูปร่าง (N, 1, 2)
         points = cnt.reshape(-1, 2) # แปลงเป็น (N, 2) == (px, py)
-        
+        if len(points) < 6: continue
         # 4. วนลูปผ่านทุกจุดใน Contour
         for px, py in points:
             
@@ -88,8 +88,8 @@ def convert_contours_to_meter_coords(contours, IMG_PROCESS_WIDTH, IMG_PROCESS_HE
             
             # สูตรการแปลง: (ใช้ shifting_y (ภาพ) เพื่อกำหนดแกน X (หุ่นยนต์) 
             # และ shifting_x (ภาพ) เพื่อกำหนดแกน Y (หุ่นยนต์)
-            rx = CENTER_X + (shifted_y * scale_factor) 
-            ry = CENTER_Y + (shifted_x * scale_factor) 
+            rx = CENTER_X - (shifted_y * scale_factor) 
+            ry = CENTER_Y - (shifted_x * scale_factor) 
             
             all_waypoints.append({
                 'path_id': path_id,
@@ -133,7 +133,7 @@ def full_waypoints(xy_coords, Z_DRAW, Z_SAFE, HOME_POS_X, HOME_POS_Y):
     # เราใช้ HOME_POS ที่กำหนดไว้
     final_waypoints.append({
         'x': HOME_POINT[0], 'y': HOME_POINT[1], 'z': HOME_POINT[2], 'type': 0, 'cmd': 'HOME_START', 
-        'path_id': -1, 'count':0
+        'path_id': -1
     })
     
     # --- LOOP ผ่านแต่ละ Path ID ---
@@ -142,7 +142,7 @@ def full_waypoints(xy_coords, Z_DRAW, Z_SAFE, HOME_POS_X, HOME_POS_Y):
         
         # 2. เตรียมข้อมูล Path
         coords = group[['meter_x', 'meter_y']].values
-        
+        # if len(coords) < 2: continue
         # P1: จุดแรกของ Path
         P1_xy = coords[0]
         

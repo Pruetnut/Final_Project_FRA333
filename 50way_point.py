@@ -7,7 +7,7 @@ from skimage.morphology import skeletonize
 
 # --- CONFIGURATION ---
 IMAGE_PATH = "image/FIBO.png" 
-OUTPUT_WAYPOINTS_CSV = "Waypoints_For_Ruckig.csv" # ชื่อไฟล์สำหรับเอาไปใส่ Ruckig
+OUTPUT_WAYPOINTS_CSV = "Waypoints_from50.csv" # ชื่อไฟล์สำหรับเอาไปใส่ Ruckig
 
 # Workspace & Robot Settings
 CANVAS_WIDTH_M = 0.5        

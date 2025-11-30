@@ -8,7 +8,7 @@ from skimage.morphology import skeletonize
 # --- 1. CONFIGURATION ---
 # IMAGE_PATH = "image/Bird.jpg" 
 IMAGE_PATH = "image/FIBO.png"
-OUTPUT_WAYPOINTS_CSV = "Waypoints_fix_doublelineN.csv"
+OUTPUT_WAYPOINTS_CSV = "Matlab/Waypoints_from94e.csv"
 
 
 #Image size &
@@ -174,8 +174,8 @@ def convert_contours_to_meter_coords(contours, IMG_PROCESS_WIDTH, IMG_PROCESS_HE
                 
                 # สูตรการแปลง: (ใช้ shifting_y (ภาพ) เพื่อกำหนดแกน X (หุ่นยนต์) 
                 # และ shifting_x (ภาพ) เพื่อกำหนดแกน Y (หุ่นยนต์)
-                rx = CENTER_X + (shifted_y * scale_factor) 
-                ry = CENTER_Y + (shifted_x * scale_factor) 
+                rx = CENTER_X - (shifted_y * scale_factor) 
+                ry = CENTER_Y - (shifted_x * scale_factor) 
                 
                 all_waypoints.append({
                     'path_id': path_id,

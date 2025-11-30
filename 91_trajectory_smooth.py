@@ -15,14 +15,13 @@ DT = 0.008  # Sampling time 8ms (125Hz)
 # Operational Limits (ตั้งค่าใช้งานจริง ไม่ใช่ Max Spec)
 # UR5e Max Joint Speed ~3.14 rad/s, Max TCP Speed ~1 m/s (Safety)
 # แต่สำหรับงานวาด เราต้องจำกัดให้ช้าลงเพื่อความแม่นยำ
-LIMIT_VEL_DRAW = 0.05    # วาดช้าๆ (5 cm/s)
-LIMIT_ACC_DRAW = 0.1     # ความเร่งต่ำๆ เส้นจะได้ไม่เบี้ยว
 
-LIMIT_VEL_TRAVEL = 0.25  # เดินทางเร็วหน่อย (25 cm/s)
-LIMIT_ACC_TRAVEL = 0.5   # เร่งได้
-
-# Force Time for Vertical Moves (ป้องกันการยกไม่สุด)
-MIN_LIFT_DURATION = 0.9  # อย่างน้อย x วินาที สำหรับการยก/วาง
+LIMIT_VEL_DRAW = 0.05    # (5 cm/s)
+LIMIT_ACC_DRAW = 0.1     # (10 cm/s^2)
+LIMIT_VEL_TRAVEL = 0.25  # (25 cm/s)
+LIMIT_ACC_TRAVEL = 0.5   # (50 cm/s^2)
+# Force Time for Vertical Moves
+MIN_LIFT_DURATION = 0.9  # (0.9s)
 
 # --- 2. LOAD DATA ---
 if not os.path.exists(INPUT_CSV):

@@ -8,8 +8,8 @@ from skimage.morphology import skeletonize
 from skimage import data
 
 # --- 1. CONFIGURATION ---
-IMAGE_PATH = "image/FIBO.png" 
-OUTPUT_WAYPOINTS_CSV = "Waypoints_For_Ruckig.csv"
+IMAGE_PATH = "image/FIBO.png"
+OUTPUT_WAYPOINTS_CSV = "Matlab/Waypoint_form_75.csv"
 
 # --- Robot Workspace ---
 CENTER_X = 0.5      # เมตร
